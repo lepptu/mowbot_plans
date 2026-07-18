@@ -26,28 +26,35 @@
 
 ## PHASE 1 — FIRMWARE (`/home/ros-pi/hoverboard_firmware`, STM32, flash via ST-Link)
 
+**Status 2026-07-18: all code tasks DONE and pushed — commit `e375def` (feature) on top of `56e2ffc` (IRQ cherry-pick); rollback tag `pre-standby` = old firmware. Remaining: build (1.12), flash (1.13), gate tests (G1.x).**
+
+Implementation notes Phase 2 must match:
+- **Feedback field order** (30 bytes): `start, cmd1, cmd2, speedR_meas, speedL_meas, wheelR_cnt, wheelL_cnt, left_dc_curr, right_dc_curr, iq_l, iq_r, batVoltage, boardTemp, cmdLed, checksum` — `iq_l/iq_r` sit **between `right_dc_curr` and `batVoltage`**, not at the end.
+- **Disarm-on-timeout added** (design refinement in 1.3): motors also disarm when the serial link times out (~0.8 s), not only when flags bit 0 is cleared — driver dead ⇒ full standby/freewheel instead of upstream's OPEN_MODE-with-PWM-active. Arming additionally requires the link to be alive (`timeoutFlgSerial == 0`).
+- `FLASH_WRITE_KEY` bumped 0x1002 → 0x1012 (stale flash calibrations ignored on first boot of the new firmware).
+
 ### Feature work
 
-- [ ] **1.1 Remove inactivity poweroff** (= review 4.1). `main.c:527-534` + `INACTIVITY_TIMEOUT` in `config.h:178`. Keep `BAT_DEAD` undervoltage poweroff (`main.c:500`) and button short-press poweroff untouched.
-- [ ] **1.2 Protocol Option A.** Add `int16_t flags` to `SerialCommand` (`Inc/util.h:38-43`); include it in the command checksum (`util.c:1249`). Bit 0 = motors allowed.
-- [ ] **1.3 Enable state machine** (feature §4 F3). New `motorsAllowed` driven by flags bit 0: when 0 → force `enable = 0` immediately and ignore steer/speed; on 0→1 → existing arming gate unchanged (no `z_errCode`, inputs within ±50, `main.c:226`). Serial-timeout failsafe behavior unchanged underneath.
-- [ ] **1.4 Feedback telemetry** (feature §4 F4 + §10): status bits in `cmdLed` — bits 0-3 `rtY_Left.z_errCode`, 4-7 `rtY_Right.z_errCode`, 8 = motors enabled, 9 = `timeoutFlgSerial` — **and** append `int16_t iq_l, iq_r` (`rtY_Left/Right.iq`) to the feedback struct + checksum (frame 26 → 30 bytes).
-- [ ] **1.5 Remove both long-press branches** (feature §7 caution 2): delete `AUTO_CALIBRATION_ENA` (`config.h:183`) and the `updateCurSpdLim()` call in `poweroffPressCheck()` (`util.c:1539`). Short-press poweroff stays.
-- [ ] **1.6 Cherry-pick upstream `8df24d4`** (review §6.5): UART/DMA interrupt priorities 0→1 in `setup.c`/`control.c` so serial can never preempt the 16 kHz FOC ISR. Already fetched into the repo (`git cherry-pick 8df24d4` or apply by hand).
-- [ ] **1.7 Coupling guards** (review §2): `#error` in `config.h` if `N_MOT_MAX != 1000` or steer/speed coefficients differ from defaults while `VARIANT_USART` — protects the driver's "1 unit = 1 RPM" and mixer-inversion assumptions.
+- [x] **1.1 Remove inactivity poweroff** (= review 4.1). `main.c:527-534` + `INACTIVITY_TIMEOUT` in `config.h:178`. Keep `BAT_DEAD` undervoltage poweroff (`main.c:500`) and button short-press poweroff untouched.
+- [x] **1.2 Protocol Option A.** Add `int16_t flags` to `SerialCommand` (`Inc/util.h:38-43`); include it in the command checksum (`util.c:1249`). Bit 0 = motors allowed.
+- [x] **1.3 Enable state machine** (feature §4 F3). New `motorsAllowed` driven by flags bit 0: when 0 → force `enable = 0` immediately and ignore steer/speed; on 0→1 → existing arming gate unchanged (no `z_errCode`, inputs within ±50, `main.c:226`). Serial-timeout failsafe behavior unchanged underneath.
+- [x] **1.4 Feedback telemetry** (feature §4 F4 + §10): status bits in `cmdLed` — bits 0-3 `rtY_Left.z_errCode`, 4-7 `rtY_Right.z_errCode`, 8 = motors enabled, 9 = `timeoutFlgSerial` — **and** append `int16_t iq_l, iq_r` (`rtY_Left/Right.iq`) to the feedback struct + checksum (frame 26 → 30 bytes).
+- [x] **1.5 Remove both long-press branches** (feature §7 caution 2): delete `AUTO_CALIBRATION_ENA` (`config.h:183`) and the `updateCurSpdLim()` call in `poweroffPressCheck()` (`util.c:1539`). Short-press poweroff stays.
+- [x] **1.6 Cherry-pick upstream `8df24d4`** (review §6.5): UART/DMA interrupt priorities 0→1 in `setup.c`/`control.c` so serial can never preempt the 16 kHz FOC ISR. Already fetched into the repo (`git cherry-pick 8df24d4` or apply by hand).
+- [x] **1.7 Coupling guards** (review §2): `#error` in `config.h` if `N_MOT_MAX != 1000` or steer/speed coefficients differ from defaults while `VARIANT_USART` — protects the driver's "1 unit = 1 RPM" and mixer-inversion assumptions.
 - [x] **1.8** ~~Serial-timeout beep~~ — resolved: stays disabled, no code change (`main.c:507-508` untouched).
 
 ### Cleanup (small, do while in there)
 
-- [ ] **1.9** `uint16_t up_down[6]` → `int16_t` (review 4.2, `bldc.c:95`).
-- [ ] **1.10** Fix stale calibration comments (review 4.5, `config.h:78` area).
-- [ ] **1.11** Update `Arduino/hoverserial.ino` reference + short protocol note (new frame layout, cmdLed bits) in the fork README.
+- [x] **1.9** `uint16_t up_down[6]` → `int16_t` (review 4.2, `bldc.c:95`).
+- [x] **1.10** Fix stale calibration comments (review 4.5, `config.h:78` area).
+- [x] **1.11** Update `Arduino/hoverserial.ino` reference + short protocol note (new frame layout, cmdLed bits) in the fork README.
 
 ### Build, flash, commit
 
 - [ ] **1.12** Build: PlatformIO env `VARIANT_USART` (default) — or `make` (same config, verified consistent). Check flash/RAM size output.
 - [ ] **1.13** Flash via ST-Link — **from the separate flashing PC** (coding happens on the Pi): either (a) push the firmware fork from the Pi, clone/pull on the PC and `pio run -e VARIANT_USART -t upload` (PlatformIO installs the toolchain itself), or (b) build on the Pi and copy only the binary (`scp build/hover.bin` / `firmware.bin` from `.pio/build/VARIANT_USART/`) and flash with `st-flash --reset write <bin> 0x8000000`. Board must be powered on during flashing (button or relay pulse).
-- [ ] **1.14** Commit + push to `lepptu/hoverboard-firmware-hack-FOC` (tag the pre-change commit first for rollback, e.g. `pre-standby`).
+- [x] **1.14** Commit + push to `lepptu/hoverboard-firmware-hack-FOC` (tag the pre-change commit first for rollback, e.g. `pre-standby`).
 
 ### PHASE 1 GATE — verify before touching the driver
 
@@ -66,7 +73,7 @@ Interim state is **intentional**: old driver + new firmware = motors can never a
 
 ### Protocol + feature work
 
-- [ ] **2.1 `protocol.hpp`:** add `flags` to `SerialCommand` and `iq_l`/`iq_r` to `SerialFeedback`; update both checksum computations (`hoverboard_driver.cpp:412,526`); add `static_assert(sizeof(SerialCommand) == 10)` / `static_assert(sizeof(SerialFeedback) == 30)`.
+- [ ] **2.1 `protocol.hpp`:** add `flags` to `SerialCommand` (before `checksum`) and `iq_l`/`iq_r` to `SerialFeedback` (**between `right_dc_curr` and `batVoltage`** — see Phase 1 implementation notes for the authoritative field order); update both checksum computations (`hoverboard_driver.cpp:412,526`); add `static_assert(sizeof(SerialCommand) == 10)` / `static_assert(sizeof(SerialFeedback) == 30)`.
 - [ ] **2.2 D1:** `motors_enabled` dynamic bool parameter, **default false**, on `hoverboard_driver_node` (same pattern as `use_pid`).
 - [ ] **2.3 D2:** while disabled → send steer = 0, speed = 0, flag bit 0 = 0, ignoring diff_drive commands.
 - [ ] **2.4 D3:** decode `cmdLed` bits → publish `hoverboard/motors_enabled` (Bool, on change), motor error codes (per wheel), firmware link-timeout flag; publish `iq` per wheel (A, scaling: raw fixdt / `A2BIT_CONV` = 50 per amp — verify on bench).
