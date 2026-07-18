@@ -53,7 +53,11 @@ Implementation notes Phase 2 must match:
 ### Build, flash, commit
 
 - [ ] **1.12** Build: PlatformIO env `VARIANT_USART` (default) — or `make` (same config, verified consistent). Check flash/RAM size output.
-- [ ] **1.13** Flash via ST-Link — **from the separate flashing PC** (coding happens on the Pi): either (a) push the firmware fork from the Pi, clone/pull on the PC and `pio run -e VARIANT_USART -t upload` (PlatformIO installs the toolchain itself), or (b) build on the Pi and copy only the binary (`scp build/hover.bin` / `firmware.bin` from `.pio/build/VARIANT_USART/`) and flash with `st-flash --reset write <bin> 0x8000000`. Board must be powered on during flashing (button or relay pulse).
+- [ ] **1.13** Flash via ST-Link — **from the separate flashing PC** (coding happens on the Pi). Preferred: build on the Pi (`pio run` → `.pio/build/VARIANT_USART/firmware.bin`), copy only that file to the PC (`scp ros-pi@<pi-ip>:.../firmware.bin .`), then flash:
+  - Linux PC (`stlink-tools`): `st-flash --reset write firmware.bin 0x8000000`
+  - Windows PC (STM32CubeProgrammer): `STM32_Programmer_CLI -c port=SWD -w firmware.bin 0x8000000 -rst` (or the GUI, program at 0x08000000)
+  - Alternative: clone the fork on the PC and `pio run -t upload` (PlatformIO installs its own toolchain).
+  - Wiring: SWDIO, SWCLK, GND to the SWD header; board powered from its own battery (button/relay pulse); leave ST-Link 3.3 V disconnected. No chip unlock needed (board already runs custom firmware).
 - [x] **1.14** Commit + push to `lepptu/hoverboard-firmware-hack-FOC` (tag the pre-change commit first for rollback, e.g. `pre-standby`).
 
 ### PHASE 1 GATE — verify before touching the driver
