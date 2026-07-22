@@ -75,28 +75,32 @@ Interim state is **intentional**: old driver + new firmware = motors can never a
 
 ## PHASE 2 — DRIVER (`/home/ros-pi/pi_ws/src/ros2-driver-converted`, package `hoverboard_driver`)
 
+**Status 2026-07-23: all code tasks DONE, built (`--symlink-install`), deployed and verified on hardware — commit `5f65e5d`, rollback tag `pre-standby-driver`. An adversarial multi-agent review (16 agents) ran before the build: 13 findings, 11 confirmed, all fixed or accepted-with-rationale. Notable extra fixes beyond the plan: right-wheel POSITION sign removed (firmware already mirror-compensates odom_r — the historical negation made position oppose velocity), velocities zeroed on link loss (no phantom odometry), disarm frame on deactivate, curvature-preserving wheel-speed scaling, executor startup-race guard. Accepted w/o fix: 0→cruise step after brownout re-arm (firmware rate limiter smooths ~100 ms), restart-detection false-positive window (~1.5e-6/gap).**
+
+**Live verification 2026-07-23 (G2.1 PASSED + more):** driver activates with "Motors start disarmed (standby)" message; board powered via relay; `connected: true`, battery 41.29 V, temp 36.7 °C, errors 0, iq 0.0, `motors_enabled: false`, **`firmware_serial_timeout: false` — proves the firmware accepts the new 10-byte commands (both protocol directions verified without spinning a wheel)**; zero checksum warnings, zero overrun warnings in the startup window; latched status topics deliver instantly.
+
 ### Protocol + feature work
 
-- [ ] **2.1 `protocol.hpp`:** add `flags` to `SerialCommand` (before `checksum`) and `iq_l`/`iq_r` to `SerialFeedback` (**between `right_dc_curr` and `batVoltage`** — see Phase 1 implementation notes for the authoritative field order); update both checksum computations (`hoverboard_driver.cpp:412,526`); add `static_assert(sizeof(SerialCommand) == 10)` / `static_assert(sizeof(SerialFeedback) == 30)`.
-- [ ] **2.2 D1:** `motors_enabled` dynamic bool parameter, **default false**, on `hoverboard_driver_node` (same pattern as `use_pid`).
-- [ ] **2.3 D2:** while disabled → send steer = 0, speed = 0, flag bit 0 = 0, ignoring diff_drive commands.
-- [ ] **2.4 D3:** decode `cmdLed` bits → publish `hoverboard/motors_enabled` (Bool, on change), motor error codes (per wheel), firmware link-timeout flag; publish `iq` per wheel (A, scaling: raw fixdt / `A2BIT_CONV` = 50 per amp — verify on bench).
-- [ ] **2.5 D4:** auto-disable timer — drop the flag after `auto_disable_timeout` (dynamic param, default 120.0 s) of continuous zero commands; silently re-assert on next nonzero command while `motors_enabled` still true.
+- [x] **2.1 `protocol.hpp`:** add `flags` to `SerialCommand` (before `checksum`) and `iq_l`/`iq_r` to `SerialFeedback` (**between `right_dc_curr` and `batVoltage`** — see Phase 1 implementation notes for the authoritative field order); update both checksum computations (`hoverboard_driver.cpp:412,526`); add `static_assert(sizeof(SerialCommand) == 10)` / `static_assert(sizeof(SerialFeedback) == 30)`.
+- [x] **2.2 D1:** `motors_enabled` dynamic bool parameter, **default false**, on `hoverboard_driver_node` (same pattern as `use_pid`).
+- [x] **2.3 D2:** while disabled → send steer = 0, speed = 0, flag bit 0 = 0, ignoring diff_drive commands.
+- [x] **2.4 D3:** decode `cmdLed` bits → publish `hoverboard/motors_enabled` (Bool, on change), motor error codes (per wheel), firmware link-timeout flag; publish `iq` per wheel (A, scaling: raw fixdt / `A2BIT_CONV` = 50 per amp — verify on bench).
+- [x] **2.5 D4:** auto-disable timer — drop the flag after `auto_disable_timeout` (dynamic param, default 120.0 s) of continuous zero commands; silently re-assert on next nonzero command while `motors_enabled` still true.
 
 ### Correctness fixes (review §3 — same files, do in the same pass)
 
-- [ ] **2.6** Right-encoder wrap fix (3.1): unwrap **before** negating (`hoverboard_driver.cpp:442,541`). Also board-restart check on raw wrapped counts, not unwrapped positions (3.2, line 564).
-- [ ] **2.7** **Delete the PID path** (decided): remove `pid.cpp`/`pid.hpp`, the `pids[2]` members, the `use_pid`/`f`/`p`/`i`/`d`/`i_clamp_*`/`antiwindup` parameters and their callback branches, the `setParameters` calls in `write()`, and the `control_toolbox` dependency from CMakeLists. `write()` keeps only the direct rad/s → RPM path (+ ±1000 clamp from 2.10). Review findings 3.3/3.4 are resolved by deletion. Closed-loop speed control remains in firmware SPD_MODE.
-- [ ] **2.8** `max_velocity /= wheel_radius` out of `on_activate` → `on_init` (3.5).
-- [ ] **2.9** `exit(-1)` → `return CallbackReturn::ERROR` on serial-open failure (3.6).
-- [ ] **2.10** Smaller items (3.7): function-statics in `on_encoder_update` → members; `connected` only counts checksum-valid frames; guard `std::stod` on missing hardware params; handle short serial writes; remove `prev_msg` + misleading `DEFAULT_PORT`; clamp speed/steer to ±1000 before the int16 casts.
+- [x] **2.6** Right-encoder wrap fix (3.1): unwrap **before** negating (`hoverboard_driver.cpp:442,541`). Also board-restart check on raw wrapped counts, not unwrapped positions (3.2, line 564).
+- [x] **2.7** **Delete the PID path** (decided): remove `pid.cpp`/`pid.hpp`, the `pids[2]` members, the `use_pid`/`f`/`p`/`i`/`d`/`i_clamp_*`/`antiwindup` parameters and their callback branches, the `setParameters` calls in `write()`, and the `control_toolbox` dependency from CMakeLists. `write()` keeps only the direct rad/s → RPM path (+ ±1000 clamp from 2.10). Review findings 3.3/3.4 are resolved by deletion. Closed-loop speed control remains in firmware SPD_MODE.
+- [x] **2.8** `max_velocity /= wheel_radius` out of `on_activate` → `on_init` (3.5).
+- [x] **2.9** `exit(-1)` → `return CallbackReturn::ERROR` on serial-open failure (3.6).
+- [x] **2.10** Smaller items (3.7): function-statics in `on_encoder_update` → members; `connected` only counts checksum-valid frames; guard `std::stod` on missing hardware params; handle short serial writes; remove `prev_msg` + misleading `DEFAULT_PORT`; clamp speed/steer to ±1000 before the int16 casts.
 
 ### Jitter bundle (review §3.8 — fixes the known ros2_control jitter warnings)
 
-- [ ] **2.11** Internal node onto its own executor thread; delete `rclcpp::spin_some` from `read()` (mutex/atomics for `pid_config`).
-- [ ] **2.12** Debug publishers → `realtime_tools::RealtimePublisher` and/or param-gated at ≤10 Hz; `connected` on change only.
-- [ ] **2.13** Chunked serial reads (buffer, then feed `protocol_recv`).
-- [ ] **2.14** `RCLCPP_WARN_THROTTLE` for checksum mismatches.
+- [x] **2.11** Internal node onto its own executor thread; delete `rclcpp::spin_some` from `read()` (mutex/atomics for `pid_config`).
+- [x] **2.12** Debug publishers → `realtime_tools::RealtimePublisher` and/or param-gated at ≤10 Hz; `connected` on change only.
+- [x] **2.13** Chunked serial reads (buffer, then feed `protocol_recv`).
+- [x] **2.14** `RCLCPP_WARN_THROTTLE` for checksum mismatches.
 
 ### Optional (can defer to Phase 3)
 
@@ -104,12 +108,12 @@ Interim state is **intentional**: old driver + new firmware = motors can never a
 
 ### Build + deploy (per repo build rules)
 
-- [ ] **2.16** `cd /home/ros-pi/pi_ws && colcon build --packages-select hoverboard_driver` (one package, one build per command), then restart the ROS2 systemd units.
-- [ ] **2.17** Commit + push driver repo (tag pre-change state for rollback).
+- [x] **2.16** `cd /home/ros-pi/pi_ws && colcon build --symlink-install --packages-select hoverboard_driver` (one package, one build per command; **`--symlink-install` per user decision 2026-07-22**), then restart the ROS2 systemd units (`mowbot-launch-bringup` — user stopped it for the Phase 2 work).
+- [x] **2.17** Commit + push driver repo (tag pre-change state for rollback).
 
 ### PHASE 2 GATE — end-to-end verification
 
-- [ ] **G2.1** Boot: board powered (relay orchestration or already on), feedback flowing, `motors_enabled` false, **no arming beeps**, wheels freewheel.
+- [x] **G2.1 PASSED 2026-07-23** — see live verification above.
 - [ ] **G2.2** `ros2 param set /hoverboard_driver_node motors_enabled true` → arming beeps, `hoverboard/motors_enabled` → true, wheels drive on `/cmd_vel`.
 - [ ] **G2.3** Stop commanding for >2 min → auto-disable (freewheel, status false); nonzero command → silent re-arm + drives.
 - [ ] **G2.4** `motors_enabled false` → immediate freewheel even while commands stream.
