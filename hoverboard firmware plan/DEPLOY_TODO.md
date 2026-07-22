@@ -52,8 +52,8 @@ Implementation notes Phase 2 must match:
 
 ### Build, flash, commit
 
-- [ ] **1.12** Build: PlatformIO env `VARIANT_USART` (default) — or `make` (same config, verified consistent). Check flash/RAM size output.
-- [ ] **1.13** Flash via ST-Link — **from the separate flashing PC** (coding happens on the Pi). Preferred: build on the Pi (`pio run` → `.pio/build/VARIANT_USART/firmware.bin`), copy only that file to the PC (`scp ros-pi@<pi-ip>:.../firmware.bin .`), then flash:
+- [x] **1.12** Build — done 2026-07-22 on the flashing PC (VSCode + PlatformIO). Needed `platform_packages = platformio/tool-openocd@~2.1100.0` in the VARIANT_USART env for the stlink upload; committed as `39f67ab`.
+- [x] **1.13** Flash — done 2026-07-22 via VSCode+PlatformIO on the flashing PC. (Original instructions kept below for future reflashes.) Flash via ST-Link — **from the separate flashing PC** (coding happens on the Pi). Preferred: build on the Pi (`pio run` → `.pio/build/VARIANT_USART/firmware.bin`), copy only that file to the PC (`scp ros-pi@<pi-ip>:.../firmware.bin .`), then flash:
   - Linux PC (`stlink-tools`): `st-flash --reset write firmware.bin 0x8000000`
   - Windows PC (STM32CubeProgrammer): `STM32_Programmer_CLI -c port=SWD -w firmware.bin 0x8000000 -rst` (or the GUI, program at 0x08000000)
   - Alternative: clone the fork on the PC and `pio run -t upload` (PlatformIO installs its own toolchain).
@@ -64,11 +64,11 @@ Implementation notes Phase 2 must match:
 
 Interim state is **intentional**: old driver + new firmware = motors can never arm (command checksum mismatch → failsafe), robot immobile but safe.
 
-- [ ] **G1.1** Board boots and feedback streams at 100 Hz. Since the feedback frame grew to 30 bytes, the **old driver's telemetry is dead until Phase 2 — expected** (checksum rejects). Verify frames directly instead: quick serial dump on the Pi (e.g. `python3 -c "import serial;s=serial.Serial('/dev/ttyAMA0',115200);d=s.read(120);print(d.hex(' '))"` — look for repeating `cd ab` start markers spaced 30 bytes apart).
-- [ ] **G1.2** Motors do **not** arm with the old driver running (no arming beeps). Expected, proves fail-safe.
-- [ ] **G1.3** Idle >35 min → board **stays on** (inactivity poweroff gone).
+- [x] **G1.1 PASSED 2026-07-22** — 8 consecutive frames captured on the Pi: `cd ab` markers exactly every 30 bytes, checksum valid, fields sane (batV 40.20 V, temp 36.3 °C, currents ≈0, status word = disarmed + serialTimeout as expected). Board boots and feedback streams at 100 Hz. Since the feedback frame grew to 30 bytes, the **old driver's telemetry is dead until Phase 2 — expected** (checksum rejects). Verify frames directly instead: quick serial dump on the Pi (e.g. `python3 -c "import serial;s=serial.Serial('/dev/ttyAMA0',115200);d=s.read(120);print(d.hex(' '))"` — look for repeating `cd ab` start markers spaced 30 bytes apart).
+- [x] **G1.2 PASSED 2026-07-22** — old driver rejects every frame (~100 checksum warns/s in journal), status word bit 8 = 0 (disarmed), no arming beeps. Motors cannot arm with the old driver. NOTE: journald WARN spam continues until Phase 2 — stop `mowbot-launch-bringup` or power the board off between test sessions if it bothers.
+- [ ] **G1.3** Idle >35 min → board **stays on** (inactivity poweroff gone). *In progress 2026-07-22 — board powered on and left idle; timed re-check scheduled.*
 - [ ] **G1.4** Button short press still powers off; second press/relay pulse powers on.
-- [ ] **G1.5** Relay pulse (`ros2 topic pub --once /hoverBtnR1_pulse std_msgs/Bool "data: true"`) toggles power as before.
+- [x] **G1.5 PASSED 2026-07-22** — relay pulse via `/hoverBtnR1_pulse` powered the board on from off; feedback started streaming within seconds.
 - [ ] **G1.6** Hold button >5 s → nothing happens except (possibly) poweroff path — calibration/limit branches gone.
 
 ---
