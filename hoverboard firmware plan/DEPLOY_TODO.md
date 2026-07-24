@@ -146,6 +146,7 @@ How `motors_enabled true` comes about when the user powers on and wants to drive
 - [ ] **3.2b** `arm_request` Bool topic → parameter mapping (the plumbing from the design block); web-UI "Motors armed" toggle via MQTT bridge; joystick arm/disarm button.
 - [ ] **3.3** Web-UI settings field for `auto_disable_timeout` (backend → SetParameters on `hoverboard_driver_node`).
 - [ ] **3.4** Surface in web UI / OLED panel: motor state, battery voltage (+ percentage if 2.15 done), motor error codes.
+- [ ] **3.4b** Web UI: show per-wheel pushing **force in newtons** alongside iq — display-layer only: `N = k × iq_current` (driver topics stay in amps). `k` [N/A] is a web-UI setting, default ≈ 6 N/A until calibrated. **Calibration (once):** tether the robot to a luggage/fish scale, arm motors, command a slow speed so the wheels stall against the tether, read scale (kg × 9.81 = N) and the summed `hoverboard/*/iq_current` at the same moment → k = N / A. Stall is the most accurate regime for this (no back-EMF/speed losses), and the single constant absorbs all firmware unit conventions (peak/RMS, A2BIT_CONV). Repeat at two pull strengths to confirm linearity.
 - [ ] **3.5** Low-battery return-to-dock condition in BT (needs the always-on telemetry from Phase 1).
 - [ ] **Deferred ideas:** IMU level-check before mid-mission disarm (feature §8); command echo verification via `cmd1/cmd2` (review §6.3).
 
