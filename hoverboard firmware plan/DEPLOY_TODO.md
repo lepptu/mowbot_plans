@@ -114,9 +114,9 @@ Interim state is **intentional**: old driver + new firmware = motors can never a
 ### PHASE 2 GATE — end-to-end verification
 
 - [x] **G2.1 PASSED 2026-07-23** — see live verification above.
-- [ ] **G2.2** `ros2 param set /hoverboard_driver_node motors_enabled true` → arming beeps, `hoverboard/motors_enabled` → true, wheels drive on `/cmd_vel`.
-- [ ] **G2.3** Stop commanding for >2 min → auto-disable (freewheel, status false); nonzero command → silent re-arm + drives.
-- [ ] **G2.4** `motors_enabled false` → immediate freewheel even while commands stream.
+- [x] **G2.2 PASSED 2026-07-24 (user)** — param set true → beep, holding torque, drives from web-UI.
+- [x] **G2.3 PASSED 2026-07-24** — 2-min auto-disable verified by user. Found+fixed (`0319989`): re-setting `motors_enabled true` after an auto-disable did not re-arm (param was still true → no edge); now any set-to-true arms — verified live with a 5 s test timeout. *Silent re-arm by just driving (without touching the param) is designed in but still unexercised — try it once during the odometry drive.*
+- [x] **G2.4 PASSED 2026-07-24 (user)** — disable while driving → immediate freewheel.
 - [ ] **G2.5** Odometry: drive >61 m (or bench-spin a wheel >100 revs) → **no position jump** on the right wheel (`hoverboard/right_wheel/position` continuous) — proves 2.6.
 - [ ] **G2.6** Jitter: controller_manager warnings gone/greatly reduced over a >30 min session.
 - [ ] **G2.7** Telemetry: battery voltage/temp/currents update at all times, motors enabled or not; unplug a hall connector briefly (bench!) → error code appears on the new error topic.
