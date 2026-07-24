@@ -126,8 +126,24 @@ Interim state is **intentional**: old driver + new firmware = motors can never a
 
 ## PHASE 3 — BT / UI / INTEGRATION
 
+### Manual-drive arming design (added 2026-07-24)
+
+How `motors_enabled true` comes about when the user powers on and wants to drive manually — grounded in the actual cmd_vel flow: web drive pad → MQTT bridge → `cmd_vel_web` → twist_mux (joystick 100 > web 75 > foxglove 50 > nav 10, all behind the F31 e-stop lock) → diff_drive → driver.
+
+**Recommended (hybrid): one explicit tap per session, machinery does the rest.**
+- Boot default stays `motors_enabled: false` (standby, telemetry only).
+- The web UI drive/settings page gets a prominent **"Motors armed" toggle**; its state mirrors the latched `hoverboard/motors_enabled` topic. One tap → beep → armed; after that the already-verified silent re-arm / 2-min auto-disable machinery handles everything (drive whenever, standby when idle).
+- Joystick: map a button to the same arm/disarm action.
+- Missions: BT sets true at mission start, false at dock arrival / mission end (3.2) — no user action.
+- **Plumbing:** add a small `arm_request` **Bool topic** mapped to the parameter (in the driver's helper node or a tiny standalone node). Topics are trivial to publish from the MQTT bridge, a joystick mapping, and the BT alike; parameter-service calls are clumsy to bridge. All arming paths then converge on one mechanism.
+
+**Considered alternative ("standing permission"):** set `motors_enabled true` once after boot and leave it — boot arms once (2 min holding torque), then standby/silent-re-arm makes manual driving "just work" with zero new UI. Viable because every twist_mux source is deliberate, deadman'd (0.5 s), and behind the e-stop lock; rejected-by-default because any active source (incl. nav with an accidentally running mission) would move the robot, and each boot/session ends with 2 min of holding torque. Can be revisited if the toggle feels like friction in practice.
+
+**Open decision for Phase 3 implementation:** hybrid (recommended) vs standing permission. Everything else in this section is agnostic to that choice.
+
 - [ ] **3.1** Boot orchestration: if `hoverboard/connected` false after grace period → single `hoverBtnR1_pulse` → wait for connected (never pulse blindly — it's a toggle; feature §7).
-- [ ] **3.2** BT: `motors_enabled true` at mission start / manual-drive select (wait for `hoverboard/motors_enabled` true before driving); `false` at dock arrival / mission end / idle.
+- [ ] **3.2** BT: `motors_enabled true` at mission start (wait for `hoverboard/motors_enabled` true before driving); `false` at dock arrival / mission end / idle. Manual-drive arming per the design block above.
+- [ ] **3.2b** `arm_request` Bool topic → parameter mapping (the plumbing from the design block); web-UI "Motors armed" toggle via MQTT bridge; joystick arm/disarm button.
 - [ ] **3.3** Web-UI settings field for `auto_disable_timeout` (backend → SetParameters on `hoverboard_driver_node`).
 - [ ] **3.4** Surface in web UI / OLED panel: motor state, battery voltage (+ percentage if 2.15 done), motor error codes.
 - [ ] **3.5** Low-battery return-to-dock condition in BT (needs the always-on telemetry from Phase 1).
