@@ -1,6 +1,9 @@
 # 03 — Dock Raspberry Pi (ROS 2) & Web UI Integration
 
-> Status: **PLANNED 2026-07-10.** Part of the docking master plan
+> Status: **PLANNED 2026-07-10, revised 2026-07-31** — protocol surface
+> aligned with the revised [02](02_ARDUINO_FIRMWARE.md): states 0–7,
+> K1+K2 relay split, `contact_voltage` removed (divider #2 deleted),
+> self-test command path, EVT passthrough. Part of the docking master plan
 > ([README.md](README.md)). Covers everything that runs on the dock Pi,
 > how it joins the robot's zenoh network and the LXC MQTT world, and the
 > complete web-UI dock setup guide — including moving the dock later.
@@ -68,37 +71,52 @@ Subscribes:
 
 | Topic | Type | Effect |
 |---|---|---|
-| `dock/charge_enable_cmd` | `std_msgs/Bool` | forwarded as the protocol `chargeEnable` permission (default true at node start — matches firmware §02-4) |
+| `dock/charge_enable_cmd` | `std_msgs/Bool` | forwarded as the protocol `chargeEnable` permission (default true at node start — matches firmware §02-4). A false→true **edge** is also what re-arms charging from COMPLETE (02 §4, 04 §3) |
 | `dock/clear_fault_cmd` | `std_msgs/Bool` | edge → `clearFault` field |
+| `dock/self_test_cmd` | `std_msgs/Bool` | edge → `selfTest` field (pre-mow charger test: ≤2 s AC pulse with K1 open — 02 §4; firmware accepts it only in IDLE/COMPLETE) |
 
 Publishes (each RX frame, ~10 Hz):
 
 | Topic | Type | Source field |
 |---|---|---|
-| `dock/state` | `std_msgs/Int32` | state (0–4) |
+| `dock/state` | `std_msgs/Int32` | state (0–7: IDLE / SEATED / RAMP / CHARGING / DRAIN / COMPLETE / SELFTEST / FAULT — 02 §3) |
 | `dock/microswitch` | `std_msgs/Bool` | seat switch |
-| `dock/relay` | `std_msgs/Bool` | relay state |
+| `dock/relay_k1` | `std_msgs/Bool` | K1 (42 V DC relay) commanded state |
+| `dock/relay_k2` | `std_msgs/Bool` | K2/AC (mains pilot) commanded state |
 | `dock/charge_current` | `std_msgs/Float32` | A |
-| `dock/charger_voltage` | `std_msgs/Float32` | V |
-| `dock/contact_voltage` | `std_msgs/Float32` | V |
-| `dock/fault` | `std_msgs/Int32` | fault code |
+| `dock/charger_voltage` | `std_msgs/Float32` | V (divider #1 — the only voltage measurement; ≈ 0 whenever AC is off, which is the normal idle value) |
+| `dock/fault` | `std_msgs/Int32` | fault code (02 §3: 1 overcurrent, 2 AC weld — latching; 3 ramp failure — non-latching auto-retry; 4 watchdog) |
+| `dock/self_test_result` | `std_msgs/Bool` | from `EVT:SELFTEST:OK\|FAIL` |
+| `dock/event` | `std_msgs/String` | raw `EVT:*` passthrough (BOOT, NOCURRENT, EMERGENCY, …) for `dock_manager` cross-checks (04 §4.4) |
 | `dock/battery_state` | `sensor_msgs/BatteryState` | **the topic `docking_server` consumes** |
 
-`dock/battery_state` composition: `current` = +charge current (A),
-`voltage` = contact voltage, `power_supply_status` = `CHARGING` while
-state==2, `FULL` while state==3, else `NOT_CHARGING`; `present` =
-microswitch. Published at 2 Hz (steady, low-rate — it crosses WiFi).
-This gives `SimpleChargingDock`'s `isCharging()` (current >
-`charging_threshold`) exactly what it needs, and carries the
-microswitch for the possible custom plugin later (README D8).
+`dock/battery_state` composition: `current` = +charge current (A) —
+with the `min_reported_current_while_seated` floor option from 04 §4.3
+(report `max(measured, floor)` while state ∈ {3,5}; load-bearing since
+the dock goes fully cold at COMPLETE, 02 §4); `voltage` = charger
+voltage (equals the pack voltage while K1 is closed, ≈ 0 when cold);
+`power_supply_status` = `CHARGING` while state==3, `FULL` while
+state==5, else `NOT_CHARGING`; `present` = microswitch. Published at
+2 Hz (steady, low-rate — it crosses WiFi). This gives
+`SimpleChargingDock`'s `isCharging()` (current > `charging_threshold`)
+exactly what it needs, and carries the microswitch for the possible
+custom plugin later (README D8).
 
 Behavior notes:
 
 - Serial handling = robot-bridge pattern: 1 s open-settle + flush,
-  skip lines ≠ 8 numeric fields, locale-safe float parse, throttled
-  warns, node exits nonzero on port-open failure (systemd restarts).
-- `uptimeS` regression (Nano rebooted) → info log + republish current
-  command state.
+  skip lines ≠ 8 numeric fields (still exactly 8 — 02 §3 swapped
+  `contactVoltage` for `k2`), `EVT:*`/`WARNING:` lines routed to the
+  event topic / log instead of the frame parser, locale-safe float
+  parse, throttled warns, node exits nonzero on port-open failure
+  (systemd restarts).
+- Opening the serial port DTR-resets the Nano and **aborts any running
+  charge session by design** (02 §1): both relays drop, `EVT:BOOT`
+  arrives, the agent logs it and republishes command state; with the
+  robot still seated and enable true, the firmware re-runs the charge
+  sequence on its own. A dock-agent restart mid-charge is therefore a
+  ~seconds charging gap, not a fault. `uptimeS` regression = the same
+  detection from the frame side.
 - 10 Hz command TX keeps the Nano watchdog fed; remember firmware
   treats silence as "keep charging on interlocks", not "stop".
 
@@ -119,13 +137,16 @@ namespaced e.g. `dock_agent`, `dock_zenoh`).
 |---|---|---|---|
 | `dock/state` | `ros2/dock/state` | publish | yes (slow-changing, UI wants last value) |
 | `dock/microswitch` | `ros2/dock/microswitch` | publish | yes |
-| `dock/relay` | `ros2/dock/relay` | publish | yes |
+| `dock/relay_k1` | `ros2/dock/relay_k1` | publish | yes |
+| `dock/relay_k2` | `ros2/dock/relay_k2` | publish | yes |
 | `dock/charge_current` | `ros2/dock/charge_current` | publish | no |
 | `dock/charger_voltage` | `ros2/dock/charger_voltage` | publish | no |
-| `dock/contact_voltage` | `ros2/dock/contact_voltage` | publish | no |
 | `dock/fault` | `ros2/dock/fault` | publish | yes |
+| `dock/self_test_result` | `ros2/dock/self_test_result` | publish | yes |
+| `dock/event` | `ros2/dock/event` | publish | no |
 | `ros2/dock/charge_enable_cmd` | → `dock/charge_enable_cmd` | subscribe | never |
 | `ros2/dock/clear_fault_cmd` | → `dock/clear_fault_cmd` | subscribe | never |
+| `ros2/dock/self_test_cmd` | → `dock/self_test_cmd` | subscribe | never |
 
 Bridge LWT (existing mechanism) → `ros2/dock/bridge_status` so the UI
 can grey the dock card when the dock Pi is offline.
@@ -136,8 +157,9 @@ can grey the dock card when the dock Pi is offline.
   `/root/mowbot-mqtt-credentials.txt` + dock `secrets.yaml`).
 - ACL (targeted append, then reload): `user dock` → `topic write
   ros2/dock/#`, `topic read ros2/dock/charge_enable_cmd`, `topic read
-  ros2/dock/clear_fault_cmd`; `user webui` → add `topic write
-  ros2/dock/charge_enable_cmd` + `ros2/dock/clear_fault_cmd` (and the
+  ros2/dock/clear_fault_cmd`, `topic read ros2/dock/self_test_cmd`;
+  `user webui` → add `topic write ros2/dock/charge_enable_cmd` +
+  `ros2/dock/clear_fault_cmd` + `ros2/dock/self_test_cmd` (and the
   robot-side `ros2/docking/cmd` from 04 §7).
 
 ## 5. systemd units on the dock Pi
@@ -205,15 +227,20 @@ be re-recorded — same caveat as all mow areas.
 
 - State line driven by retained `ros2/docking/status` (robot-side
   action progress: staging / approaching / waiting for charge — 04 §7)
-  merged with dock hardware topics (`ros2/dock/state`, current,
-  voltages, microswitch, fault text).
+  merged with dock hardware topics (`ros2/dock/state`, current, charger
+  voltage, K1/K2, microswitch, fault text).
 - Buttons: **Dock** / **Undock** / **Cancel** → `ros2/docking/cmd`
   (robot side), guarded like Mission control (disabled unless mission
   idle; confirm dialogs).
-- Charging view while docked: current (A), pack voltage, est. % (33 V
-  empty → 42 V full), "charge complete" badge, session timer.
+- Charging view while docked: current (A), pack voltage (charger
+  voltage while K1 is closed; robot's own battery telemetry once the
+  dock goes cold at COMPLETE), est. % (33 V empty → 42 V full),
+  "charge complete" badge, session timer.
 - Maintenance row (collapsed `<details>`): force charge-enable off/on,
-  clear fault → `ros2/dock/charge_enable_cmd` / `ros2/dock/clear_fault_cmd`.
+  clear fault, **charger self-test** (result badge from retained
+  `ros2/dock/self_test_result`) → `ros2/dock/charge_enable_cmd` /
+  `ros2/dock/clear_fault_cmd` / `ros2/dock/self_test_cmd`. Re-charging
+  a docked COMPLETE robot = enable off→on pulse (04 §3).
 - Card greys via dock bridge LWT (dock Pi offline ≠ robot offline).
 
 **TopBar / status banner:** while `ros2/docking/status` is active,
@@ -226,8 +253,8 @@ First-time commissioning:
 1. Build dock (01), place it (01 §4.3 RTK check!), power it up.
 2. Verify dock telemetry on the Mowbot page (dock card live, state 0).
 3. Drive the robot into the dock manually with the Drive pad until the
-   microswitch clicks (dock card shows "seated", relay closes, current
-   flows — hardware is now proven end-to-end).
+   microswitch clicks (dock card shows "seated", K1 closes, AC comes
+   on, 42 V ramp, current flows — hardware is now proven end-to-end).
 4. Press **"Save dock at robot position"**. Done — pose recorded in the
    exact localization frame docking will use.
 5. Undock (Undock button, or drive out backward), then press **Dock**
@@ -257,8 +284,16 @@ discovery file. Recommend telemetry-only initially.
 - [ ] Robot powered off → dock topics still reach the web UI via the
       dock's own MQTT bridge; dock card live.
 - [ ] `ros2/dock/charge_enable_cmd false` from the web UI (as webui
-      account) opens the relay mid-charge; `true` restores; retained
-      status topics update.
+      account) runs the sequenced shutdown mid-charge (AC off → drain →
+      K1 open at 0 A, dock cold — 02 §4); `true` again re-arms and, with
+      the robot still seated, the sequence restarts; retained topics
+      update along the way.
+- [ ] `ros2/dock/self_test_cmd` from the web UI: K2 pulses ≤2 s with K1
+      open, `ros2/dock/self_test_result` updates — test both outcomes
+      (charger fed and charger disconnected).
+- [ ] Restart `mowbot-dock-agent.service` mid-charge: DTR abort → both
+      relays drop → agent reconnects → sequence restarts by itself, no
+      fault latched (02 §1 normal path).
 - [ ] Dock Pi reboot: all three units come up, card recovers, no manual
       steps.
 - [ ] WiFi outage 5 min (unplug AP or block on router): charging
