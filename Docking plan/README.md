@@ -1,6 +1,9 @@
 # Mowbot Docking & Charging — Master Plan
 
-> Status: **PLANNED 2026-07-10 — no code or hardware changes yet.**
+> Status: **PLANNED 2026-07-10, revised 2026-07-31.** 01/02 carry the
+> AC-side-switching revision (mains relay added, divider #2 deleted,
+> control PCB, permanent Pi↔Nano USB — see D11); the robot-side charge
+> path (04 §1) is **built and verified**. Dock build not started.
 >
 > Goal: mowbot docks itself and starts charging, fully controlled and
 > monitored from the web UI, with the dock position changeable from the
@@ -10,7 +13,7 @@
 
 | File | Scope |
 |---|---|
-| [01_HARDWARE.md](01_HARDWARE.md) | Charging dock hardware: charger, contacts, relay, sensors, dock structure, robot-side charge port |
+| [01_HARDWARE.md](01_HARDWARE.md) | Charging dock hardware: charger, AC + DC relays, control PCB, contacts, sensors, dock structure, robot-side charge port |
 | [02_ARDUINO_FIRMWARE.md](02_ARDUINO_FIRMWARE.md) | Dock Arduino Nano firmware (.hpp/.cpp structure, serial protocol, safety interlocks) |
 | [03_DOCK_PI_ROS2_AND_WEBUI.md](03_DOCK_PI_ROS2_AND_WEBUI.md) | Dock Raspberry Pi: OS, zenoh, dock agent node, MQTT bridge to the LXC, web UI dock setup guide |
 | [04_ROBOT_MODIFICATIONS.md](04_ROBOT_MODIFICATIONS.md) | Robot changes: charge contacts, Nav2 `docking_server`, bridge `dock_manager`, mission integration |
@@ -18,8 +21,8 @@
 ## The one-paragraph design
 
 The dock is a mains-powered station with a 42 V CC/CV lithium charger,
-an **Arduino Nano** doing I/O (charge relay, ACS712 current sensor,
-voltage dividers, seat microswitch) and a **Raspberry Pi** running ROS 2
+an **Arduino Nano** doing I/O (charge + mains-pilot relays, ACS712
+current sensor, voltage divider, seat microswitch) and a **Raspberry Pi** running ROS 2
 Jazzy that talks to the Nano over USB serial — the exact architecture
 already proven on the robot (`arduino_bridge` + `mowbot_robot_arduino`
 firmware). The dock Pi joins the robot's **zenoh** network over WiFi and
@@ -48,9 +51,9 @@ systematic GPS offset and makes moving the dock a 2-minute job.
                                  [Robot Nano]                    mowbot_mqtt_bridge (2nd instance)
                                                                     │ USB serial
                                                                  [Dock Nano]
-                                                                  relay 42V / ACS712 /
-                                                                  V-dividers / microswitch
-        [42V charger] ──► relay ──► dock contacts ──► robot contacts ──► fuse ──► ideal diode ──► battery
+                                                                  K1 42V + K2 AC pilot /
+                                                                  ACS712 / V-divider #1 / microswitch
+ [230V] ─► G2R-2 (L+N) ─► [42V charger] ─► fuse ─► ACS712 ─► K1 ─► dock contacts ─► robot contacts ─► fuse ─► ideal diode ─► battery
 ```
 
 Two independent data paths, on purpose:
@@ -77,6 +80,7 @@ Two independent data paths, on purpose:
 | D8 | Phase 1 uses `SimpleChargingDock` config-only; a tiny custom `MowbotChargingDock` plugin (isDocked = microswitch, isCharging = current) is the fallback if pose-based docked-detection proves unreliable | Try zero-code first; the custom plugin is ~150 lines and matches the team's existing plugin experience. |
 | D9 | Robot-side contacts isolated by an **ideal-diode module + fuse** | Robot contacts must never be live at battery voltage when driving around; diode also blocks reverse current into the charger. |
 | D10 | Forward docking, contacts at the front | Front bumper already defines the "nose"; `opennav_docking` docks forward by default; backing out on undock leaves the blade side away from the dock. |
+| D11 | **AC-side switching** (rev 2026-07-31): Omron G2R-2-SN breaks both mains poles, piloted from the control PCB; K1 demoted to 0 V-close / 0 A-open sequencing; voltage divider #2 deleted | Charger energized only during sessions/self-tests (thermal/fire risk + standby draw); DC-arc breaking eliminated from normal operation; an empty dock has double isolation. The original "no 230 V work in the DIY enclosure" constraint is void — the builder is a certified electrician. Details 01 §2–3, sequence 02 §4. |
 
 ## Phases
 

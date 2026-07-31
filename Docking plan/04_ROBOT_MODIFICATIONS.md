@@ -1,19 +1,26 @@
 # 04 — Robot (Mowbot) Modifications
 
-> Status: **PLANNED 2026-07-10.** Part of the docking master plan
-> ([README.md](README.md)). Everything that changes on the robot:
+> Status: **PLANNED 2026-07-10, updated 2026-07-31** — §1 charge-path
+> hardware is **built and verified** (0 V on pads undocked); references
+> aligned with the revised [01](01_HARDWARE.md)/[02](02_ARDUINO_FIRMWARE.md)
+> (AC-side switching, dock state renumbering). Part of the docking master
+> plan ([README.md](README.md)). Everything that changes on the robot:
 > hardware, Nav2 config/launch, the bridge `dock_manager`, and mission
 > integration. The robot's Arduino Nano and its firmware are **not
 > touched** — the charge path is passive on the robot side.
 
-## 1. Hardware changes (details/rationale in 01 §4–5)
+## 1. Hardware changes (details/rationale in 01 §4–5) — DONE 2026-07
+
+Built and verified: plates → 5 A fuse → ideal-diode module → battery
+charge input (parallel with the existing charge jack, through the BMS
+charge port); **0 V on the pads whenever undocked confirmed** — the
+exact property the dock side (01 §5) relies on.
 
 - Two contact plates on the front chassis face (rigid chassis, clear of
   bumper travel), asymmetric geometry for polarity safety.
-- Wiring: plates → 5 A fuse → ideal-diode module → battery charge input
-  (parallel with the existing charge jack, through the BMS charge port).
-- Verify: 0 V on plates undocked; bumper still triggers freely; plates
-  wipe the dock springs over the full funnel tolerance (±3 cm entry).
+- Still open (needs the dock to exist): plates wipe the dock springs
+  over the full funnel tolerance (±3 cm entry) — part of the 01 §8
+  assembly checks.
 
 ## 2. Nav2: enable `opennav_docking` (installed, v1.3.10)
 
@@ -24,7 +31,7 @@ docking_server:
   ros__parameters:
     controller_frequency: 20.0
     initial_perception_timeout: 5.0
-    wait_charge_timeout: 15.0          # relay closes on microswitch, current ramps fast; >5 s default for WiFi slack
+    wait_charge_timeout: 15.0          # microswitch starts the K1→AC sequence (02 §4); budget = AC-on ramp (01 §8 measured) + WiFi slack; 15 s comfortable
     dock_approach_timeout: 45.0
     undock_linear_tolerance: 0.05
     undock_angular_tolerance: 0.1
@@ -94,11 +101,18 @@ Behavior:
   command); refuse with reason if missing/stale-schema. Send `DockRobot`
   (`use_dock_id:false`, pose+yaw from file, `navigate_to_staging_pose:
   true`).
-- **`undock`**: sequence (02 §4 arc-avoidance): publish
-  `dock/charge_enable_cmd false` → wait until `dock/charge_current`
-  < 0.3 A (3 s timeout, proceed anyway with warn) → send `UndockRobot`
+- **`undock`**: sequenced shutdown (02 §4): publish
+  `dock/charge_enable_cmd false` → firmware runs AC-off → DRAIN → K1
+  opens at 0 A → wait until the dock reports cold (state IDLE, current
+  < 0.1 A; 3 s timeout, proceed anyway with warn) → send `UndockRobot`
   → on result, re-publish `charge_enable_cmd true` (restore autonomy
-  for the next docking).
+  for the next docking — from IDLE, seat + enable is enough, no edge
+  needed).
+- **Re-charge while still docked** (02 §4: COMPLETE re-enters charging
+  only on an `enable` 0→1 edge, since the dock goes cold at completion):
+  pulse `charge_enable_cmd` false→true. Trigger policy (robot battery
+  sag threshold vs. manual web-UI button) is a dock-agent/P4 decision —
+  default manual.
 - **Interlocks** (goto_manager conventions): mission must be idle
   (fresh `/mowing/mission_state`; `mission_state_unknown` refusal rules
   identical); e-stop → refuse/cancel; 3 s send watchdog + 5 s cancel
@@ -117,10 +131,12 @@ Behavior:
 
 ### 4.1 Normal flow
 
-Approach → plates mate → microswitch → dock firmware closes relay →
-current ~2 A → `dock/battery_state.current` > 0.15 →
+Approach → plates mate → microswitch → dock firmware runs the charge
+sequence (K1 at 0 V → AC on → 42 V ramp, 02 §4) → current ~2 A →
+`dock/battery_state.current` > 0.15 →
 `SimpleChargingDock::isCharging()` true → `DockRobot` succeeds →
-`dock_manager` status `docked`.
+`dock_manager` status `docked`. (The AC-on ramp seconds sit inside
+`wait_charge_timeout`'s budget, §2.1.)
 
 ### 4.2 isDocked before isCharging
 
@@ -142,18 +158,23 @@ CV taper on a full pack can sit below `charging_threshold` →
    brief surge on connect — bench-measure it (01 §8 dummy-load test).
 2. Dock agent option `min_reported_current_while_seated` (e.g. report
    `max(measured, 0.2)` in `battery_state.current` while
-   state ∈ {CHARGING, CHARGE_COMPLETE}): contact is genuinely verified
-   by microswitch+relay+contact-voltage, so this is honest "we are
-   charging/maintaining" semantics, not a lie. Cleanest zero-plugin fix.
-3. Custom plugin (`isCharging()` = dock state ∈ {2,3}) — the "right"
-   long-term shape if 2 feels hacky.
+   state ∈ {CHARGING, COMPLETE}): contact is genuinely verified by
+   microswitch + K1/K2 telemetry + charger voltage, so this is honest
+   "we are charging/maintaining" semantics, not a lie. Cleanest
+   zero-plugin fix — and now load-bearing: since the 02 rework the dock
+   goes fully cold at COMPLETE (no trickle), so a full pack shows a
+   genuine 0 A within a minute or two of seating.
+3. Custom plugin (`isCharging()` = dock state ∈ {3,5} — the renumbered
+   CHARGING/COMPLETE, 02 §3) — the "right" long-term shape if 2 feels
+   hacky.
 
 ### 4.4 Failure surface
 
 | Failure | Detection | Outcome |
 |---|---|---|
 | Misaligned entry, no microswitch | no charge current → `WAIT_FOR_CHARGE` times out | docking server retries (backs up to staging, re-approaches) up to `max_retries`, then action fails → UI shows error, robot parked at dock mouth |
-| Contact but relay fault (weld/no-close) | dock fault code ≠ 0, no current | action fails; dock card shows fault; charging blocked by firmware until `clear_fault` |
+| Contact but overcurrent / AC weld / ramp failure | latched dock fault 1/2 or non-latching 3 (02 §3), no current | action fails; dock card shows fault; charging blocked until `clear_fault` (fault 3 auto-retries every 60 s by itself) |
+| K1 closed but no charge path ("K1 no-close") | **no fault code** — dock sends `EVT:NOCURRENT` advisory; robot shows no `battery_voltage` step (02 §4) | indistinguishable from a full battery on the dock alone; `dock_manager` cross-checks robot telemetry and surfaces a warning in retained status |
 | WiFi drops during `WAIT_FOR_CHARGE` | `battery_state` goes stale on the robot | treat as not-charging → retry/fail path; physical charging still starts (firmware autonomy) — recorded as a known cosmetic mismatch: robot may report failed dock while actually charging; microswitch state in `ros2/docking/status` disambiguates in the UI |
 | E-stop mid-dock | existing e-stop signal | `dock_manager` cancels the action (motion stops via twist path already) |
 
@@ -225,8 +246,9 @@ CV taper on a full pack can sit below `charging_threshold` →
       10/10 attempts with charge current confirmed.
 - [ ] Dock from different yard corners (staging navigation across
       transits, keepouts respected).
-- [ ] Undock → robot idle 0.7 m out, relay open before pull-out
-      (watch dock card current during the sequence).
+- [ ] Undock → robot idle 0.7 m out, dock cold before pull-out (AC off,
+      K1 open at 0 A — watch dock card state/current during the
+      sequence).
 - [ ] Misalignment drill: offset the robot's approach by blocking one
       funnel side → verify retry behavior and clean failure.
 - [ ] E-stop mid-dock; WiFi-off-at-contact (cosmetic mismatch of §4.4
