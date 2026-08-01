@@ -50,7 +50,7 @@ Module responsibilities (what goes in each .hpp/.cpp):
 
 | Module | Contents |
 |---|---|
-| `pins.hpp` | `K1_PIN` (D5, 42 V DC relay) and `K2_PIN` (D6, 230 V pilot) — both **active-high discrete NPN low-side drivers** (01 §3), not relay modules; `MICROSWITCH_PIN` (D2, `INPUT_PULLUP`, closed = seated); `LED_PIN` (D4, single color); `V_CHARGER_PIN` (A0, divider #1, ratio ×11); `ACS712_PIN` (A1, 185 mV/A). Reserved and documented as such: D0/D1 (USB serial), D13 (bootloader LED — never an output). Matches the 01 §3.1 pin map exactly. |
+| `pins.hpp` | `K1_PIN` (D5, 42 V DC relay) and `K2_PIN` (D6, 230 V pilot) — both **active-high discrete NPN low-side drivers** (01 §3), not relay modules; `MICROSWITCH_PIN` (D2, `INPUT_PULLUP`, closed = seated); `LED_PIN` (D9, single color; Timer1 PWM pin for future dimming); `V_CHARGER_PIN` (A0, divider #1, ratio ×11); `ACS712_PIN` (A1, 185 mV/A). Reserved and documented as such: D0/D1 (USB serial), D13 (bootloader LED — never an output). Matches the 01 §3.1 pin map exactly. |
 | `sensors.hpp/.cpp` | `void sensorsInit()` — 100-sample ACS712 zero calibration at boot (copy of the robot's proven block; both relays open **and** the charger unpowered at that moment, so a guaranteed true zero); `void sensorsRead()` — every loop: EMA-filtered current (`smoothFactor` ≈ 0.05, faster than the mow motor's 0.01 since charge current is steady), divider #1 scaled to volts (discard the first conversion after the ADC channel switch, or average 8–16 reads — 01 §3), microswitch debounced (~20 ms). Getters: `chargeCurrentA()`, `chargerVoltage()`, `robotSeated()`. |
 | `charge_control.hpp/.cpp` | The two-relay state machine + interlocks below. `chargeControlTick(...)` called every loop; owns **both** relay pins exclusively and enforces the sequencing invariant (§4). Fault latch + `faultCode()`. |
 | `protocol.hpp/.cpp` | `bool protocolReadCommand(...)` — non-blocking `Serial.readStringUntil('\n')` equivalent with `strtok` split (robot pattern), feeds the watchdog timestamp; `void protocolSendStatus(...)` at 10 Hz; watchdog check (2000 ms → treat as `enable` unchanged, report fault 4). |
@@ -185,7 +185,7 @@ Additional rules:
 - K1 re-close holdoff 1 s (microswitch chatter); close only from IDLE.
 - `chargeControlSafeState()` — **both** relays open, LED to pattern — called
   at boot before calibration and by the overcurrent/weld/emergency paths.
-- Status LED (D4, single color, 01 §3): **off** = cold (IDLE, COMPLETE),
+- Status LED (D9, single color, 01 §3): **off** = cold (IDLE, COMPLETE),
   **solid** = live sequence (SEATED/RAMP/CHARGING/DRAIN/SELFTEST),
   **blinking** = FAULT.
 - All thresholds are `constexpr` in `charge_control.hpp`, documented in one

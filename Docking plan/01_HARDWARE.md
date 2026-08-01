@@ -32,7 +32,7 @@
 DOCK CONTROL PCB (perfboard, see 3.3): Arduino Nano (socketed) + K1 + K2 + drivers
  ├── D2  seat microswitch (INPUT_PULLUP)      ├── A0  divider #1
  ├── D5  K1 driver (42 V DC relay)            ├── A1  ACS712 OUT
- ├── D6  K2 driver (230 V pilot)              └── D4 status LED (optional)
+ ├── D6  K2 driver (230 V pilot)              └── D9 status LED (optional)
  └── J1 42 V in · J7 42 V out · J2 5 V in · J5 microswitch · J3 ACS712 · J6 pilot out
 
 ROBOT SIDE: see 04 — pads sit at 0 V behind the ideal diode whenever undocked.
@@ -94,7 +94,7 @@ ROBOT SIDE: see 04 — pads sit at 0 V behind the ideal diode whenever undocked.
 | ADC / input protection | **100 nF ceramic from A0 to GND, placed at the Nano pin** (filter corner ≈ 175 Hz + charge reservoir for the ADC S/H cap); optional 5.1 V zener across the 10 k as a clamp. On D2: 100 nF + 20–50 ms firmware debounce if the switch run is long | Ceramics are non-polarized — either orientation. In firmware, discard the first ADC conversion after switching channels (or average 8–16 reads). |
 | Fuse | 5 A blade fuse on the charger output | Sized ~2× charge current. First element after the charger, so it protects the ACS712 and everything downstream, including a short at the contacts. |
 | Seat microswitch | Lever/roller microswitch at the dock end-stop → **D2** (`INPUT_PULLUP`), switch closes to GND | The **only** signal that allows K1 to close (02 §4). Mount it to trigger ~5 mm *before* the mechanical end-stop, guaranteeing contact overlap. Wired this way a broken wire reads "not docked" — fails safe. |
-| Status LED (optional) | 1× single-color LED on **D4**, ~330–470 Ω series resistor to GND, active-high | State by blink pattern instead of color: **off = idle, solid = charging, blinking = fault** — readable at a glance in the yard. Optional but cheap. |
+| Status LED (optional) | 1× single-color LED on **D9**, ~330–470 Ω series resistor to GND, active-high | State by blink pattern instead of color: **off = idle, solid = charging, blinking = fault** — readable at a glance in the yard. D9 = Timer1 PWM pin, so dimming via `analogWrite` is a free future option. Optional but cheap. |
 | TVS | e.g. SMBJ48A across the contact pair on the dock side | Absorbs disconnect transients. |
 
 **Why the contacts are never live when empty:** an empty dock has the
@@ -124,9 +124,9 @@ that is the microswitch, full stop. Minimal sensing set: **D2 + divider
 | ------ | -------- | --- |
 | D0/D1 | **reserved** — USB serial to the Pi | Permanent ROS 2 link + remote flashing; never wire I/O here. |
 | D2 | Seat microswitch (`INPUT_PULLUP`) | D2/D3 are the interrupt-capable pair. |
-| D4 | Status LED (optional) | Single-color, series resistor to GND; blink patterns carry the state. |
 | D5 | K1 driver (42 V relay) | Plain digital pin, no boot-time strings attached. |
-| D6 | K2 driver (230 V pilot) | Ditto; D7 is the spare for future outputs. |
+| D6 | K2 driver (230 V pilot) | Ditto; D4/D7 are the spares for future outputs. |
+| D9 | Status LED (optional) | Single-color, series resistor to GND; blink patterns carry the state. Timer1 PWM pin — dimmable later without rewiring (Timer1 is otherwise unused; D3/D10/D11 stay reserved for interrupt/SPI). |
 | D10–D13 | keep free (SPI) | **D13 = onboard LED, toggles during the bootloader — never a relay.** |
 | A0 | Divider #1 | |
 | A1 | ACS712 OUT | |
