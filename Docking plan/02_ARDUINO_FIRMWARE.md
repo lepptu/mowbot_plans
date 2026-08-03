@@ -10,6 +10,12 @@
 > `~/Arduino/mowbot_robot_arduino/src/main.cpp` (10 Hz CSV status, newline-framed
 > commands, 2 s watchdog, ACS712 auto-zero, EMA filtering) — same idioms, but
 > written in English and split into modules instead of one `main.cpp`.
+>
+> **AMENDED 2026-08-03** after the P1 bench pass (firmware repo
+> `mowbot_dock_arduino`, v0.1.4): RAMP success is voltage **or current** —
+> the pack clamps V#1 below 40 V during CC bulk charge, so the original
+> voltage-only criterion can never fire on a part-empty pack (§4). Measured
+> charger facts, sensor calibrations and bench findings folded in (§7).
 
 ## 1. Communication: USB serial (decision)
 
@@ -135,7 +141,7 @@ Two principles:
 IDLE (cold: K1 open, AC off, V#1 ≈ 0)
   ──seat + enable + no latched fault──► close K1 (at 0 V) → SEATED
 SEATED ──K1_SETTLE_MS (~100 ms, contact bounce done)──► AC on (K2) → RAMP
-RAMP ──V#1 ≥ 40 V within RAMP_TIMEOUT_S──► CHARGING
+RAMP ──V#1 ≥ 40 V or current ≥ RAMP_A_OK within RAMP_TIMEOUT_S──► CHARGING
 RAMP ──timeout──► AC off, K1 open → IDLE, report fault 3
                   (non-latching: retry after RETRY_HOLDOFF_S while seated+enable —
                    survives a mains outage with no Pi involved)
@@ -165,6 +171,13 @@ Additional rules:
   exists because the charger's output caps decay only through the 110 kΩ
   divider — τ is on the order of minutes, so "still high shortly after
   AC-off" proves nothing; *steady/rising vs. decaying* is the discriminator.
+- **RAMP passes on voltage OR current** (amendment 2026-08-03): with K1
+  already closed (AC-last-on), a part-empty pack clamps the charger output
+  to battery voltage, so V#1 never reaches `RAMP_V_OK` during CC bulk
+  charge. Real charge current ≥ `RAMP_A_OK` is equal proof that the AC path
+  and charger are alive. Bench-proven: every real charge session entered
+  CHARGING via the current condition at a pack-clamped ~39.7 V; the voltage
+  condition fires only on a full battery (or a K1 that failed to close).
 - **COMPLETE does not re-enter charging on its own.** The dock goes fully
   cold at completion (no trickle — the old plan's "relay stays closed" is
   gone). With the robot seated and enable still 1, an automatic re-sequence
@@ -191,8 +204,9 @@ Additional rules:
 - All thresholds are `constexpr` in `charge_control.hpp`, documented in one
   block, easy to tune during bench tests: `COMPLETE_A` 0.15, `COMPLETE_S`
   60, `OVERCURRENT_A` 4.0, `OVERCURRENT_MS` 50, `RAMP_V_OK` 40.0,
-  `RAMP_TIMEOUT_S` **placeholder 5 — set from the measured AC-on→42 V ramp
-  (01 §8)**, `K1_SETTLE_MS` 100, `DRAIN_A` 0.10, `DRAIN_TIMEOUT_S` 2,
+  `RAMP_A_OK` 0.30, `RAMP_TIMEOUT_S` 5 (**measured** AC-on→42 V ramp is
+  < 0.2 s on the real charger, 2026-08-03 — 5 s is generous, keep),
+  `K1_SETTLE_MS` 100, `DRAIN_A` 0.10, `DRAIN_TIMEOUT_S` 2,
   `WELD_V` 35.0, `WELD_WINDOW_S` 300, `RETRY_HOLDOFF_S` 60, `NOCURRENT_S` 5,
   `RECLOSE_HOLDOFF_S` 1, `SELFTEST_S` 2, `WD_TIMEOUT_MS` 2000.
   (Runtime-tunable via protocol = later, only if field tests demand it.)
@@ -247,3 +261,32 @@ Additional rules:
       `EVT:NOCURRENT` advisory, **no** fault.
 - [ ] 24 h soak with battery: reaches COMPLETE, dock cold afterwards, no
       spurious faults, contacts cool.
+
+## 7. P1 bench findings (2026-08-03, firmware v0.1.4)
+
+Everything in §6 except the 24 h soak (and the selftest-during-CHARGING
+warning) was verified on the assembled control PCB with the **real 42 V/2 A
+charger and the real robot pack** — detailed scorecard in
+`mowbot_dock_arduino/TODO.md`. Findings that belong in the design record:
+
+- **Relay-coil magnetic coupling into the ACS712.** The Hall sensor sits
+  near the relays on the PCB; an energized coil couples a constant field
+  into it: +0.09 A apparent (K1) / +0.05 A (K2), with rails and grounds
+  measured clean to < 1 mV. Invisible to any multimeter check, fully
+  deterministic — compensated in firmware per commanded coil state; all
+  coil states now read 0.00 ± 0.03 A. (Also: on USB-only power the shift
+  was ~+0.6 A — coils must never run off the VBUS Schottky; J2 always
+  powered when relays operate, which is the production wiring anyway.)
+- **Sensor calibration against a series DMM**: ACS712 gain ×0.975 (0.7 %
+  agreement at 1.67 A); divider #1 effective ratio 11.18 vs nominal 11.0
+  (0.2 % agreement at 42.6 V) — within resistor tolerance. The charger's
+  true open-circuit output is **42.7 V**, not 42.0.
+- **Charge current reads negative as wired** — sign flipped in firmware so
+  the protocol reports charging as positive.
+- **EMI**: relay/AC switching occasionally drops the Nano clone's CH340 off
+  the USB bus (link re-enumerates by itself; the charge is unaffected — J2
+  power + interlocks carry it, and the reconnect is the normal DTR abort +
+  resume). Ferrite on the USB cable and/or the optional K2 snubber (01
+  §3.2) recommended for the production build; relevant to the dock Pi link.
+- **DTR abort/resume, USB-loss mid-charge, and watchdog-silence behaviors**
+  all verified live, mid-charge, several times each — all per design.

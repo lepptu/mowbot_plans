@@ -211,6 +211,11 @@ drivers, and the passives. Hand-soldered; 90° trace corners are fine.
   yard.
 - Grounds also join via the USB cable shield alongside the PSU wiring —
   a harmless loop at this scale; keep the USB cable short.
+- **Bench note 2026-08-03:** relay/AC switching EMI occasionally dropped the
+  Nano clone's CH340 off the USB bus (re-enumerates by itself; charging
+  unaffected — the reconnect is just the normal DTR abort + resume). Fit a
+  ferrite/clamp choke on the USB cable in the production build, and keep the
+  optional K2 snubber (§3.2) in mind if the dock Pi link shows the same.
 
 ## 4. Contacts and mechanical design
 
