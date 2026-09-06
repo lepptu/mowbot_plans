@@ -1,6 +1,8 @@
 # 05 — Web UI: Dock & Charging
 
-> Status: **PLANNED 2026-09-06 — nothing implemented.** Written against
+> Status: **Phase A IMPLEMENTED 2026-09-06** (web UI + LXC live; dock-side
+> build/deploy owed on the workstation — see the Phase A status block
+> below). Phases A2/B/C/D still planned. Originally written against
 > `mowbot_dock` `HANDOFF.md` (2026-09-06: dock built, deployed, firmware
 > 0.1.4, dock Pi live at 192.168.1.91, three real charge cycles verified)
 > and the web UI repo (`mowbot_web_ui`, commit `e6dd578`). This file is the
@@ -17,6 +19,38 @@
 > Dock page; HA gets telemetry **and** commands; dock Pi restart, reboot and
 > shutdown from the Dock page; backward docking. **Q 9 (COMPLETE state) is
 > the only open item and does not block implementation.**
+
+## Phase A status (2026-09-06)
+
+Done and live:
+- **Web UI** (`mowbot_web_ui` commit `16eca56`+): Dock page in the side nav
+  (`pages/DockPage.jsx`, `components/dock/*`, `hooks/useDock.js`,
+  `lib/dockStatus.js`), Status-page Charger card, alert strip, top-bar
+  ⚡/🔌 chip, banner Charging/Docked, Logs tab Robot/Dock groups,
+  `PowerPanel` shared by robot + dock. Built and deployed on the LXC.
+- **LXC broker:** `dock` account (password in
+  `/root/mowbot-mqtt-credentials.txt`), ACL (`user dock` block + webui dock
+  command topics), three `ha/ros2/dock/*` inbound bridge rules, mosquitto
+  restarted; robot bridge reconnected fine.
+- **Dock repo** (`mowbot_dock` commit `9447338`): bridge + `mowing_msgs`
+  submodules, `deploy/config/{topics,homeassistant}.yaml`,
+  `secrets.yaml.example`, `deploy/mowbot-dock-mqtt-bridge.service`,
+  Dockerfile build deps, `deploy.sh` restarts both units, PI_SETUP §9;
+  `dock_agent_node` publishes latched `dock/charge_enable` +
+  `dock/firmware_version` (compile-checked on the robot Pi).
+
+Owed (workstation + dock Pi, PI_SETUP §9): `git pull && git submodule
+update --init`, rebuild the builder image, `dock-build.sh`, `deploy.sh`,
+then §9a–9d on the Pi (runtime libs, `secrets.yaml`, sudoers, enable the
+unit). Then the §6.1 checklist. Phase A2 (charge sessions) next.
+
+Deviations from the text below: the headline shows the robot's own
+battery voltage whenever the robot bridge is online and the charger is not
+live (§3.1 said only while cold — same intent). "Last seen" for an offline
+dock is shown only when the offline transition was observed in this browser
+session (the LWT carries no timestamp). The `ros2/dock/pi/system` card
+also shows free RAM in MB. HA telemetry + maintenance-command entities ride
+in the dock bridge config (Phase A, as planned).
 
 ## 0. Where things stand
 
