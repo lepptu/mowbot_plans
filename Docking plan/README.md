@@ -17,6 +17,7 @@
 | [02_ARDUINO_FIRMWARE.md](02_ARDUINO_FIRMWARE.md) | Dock Arduino Nano firmware (.hpp/.cpp structure, serial protocol, safety interlocks) |
 | [03_DOCK_PI_ROS2_AND_WEBUI.md](03_DOCK_PI_ROS2_AND_WEBUI.md) | Dock Raspberry Pi: OS, zenoh, dock agent node, MQTT bridge to the LXC, web UI dock setup guide |
 | [04_ROBOT_MODIFICATIONS.md](04_ROBOT_MODIFICATIONS.md) | Robot changes: charge contacts, Nav2 `docking_server`, bridge `dock_manager`, mission integration |
+| [05_WEB_UI.md](05_WEB_UI.md) | Web UI: what the dock/charger shows on each page, dock pose on the map, Dock/Undock control, phased implementation (supersedes 03 §6) |
 
 ## The one-paragraph design
 
