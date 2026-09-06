@@ -42,7 +42,7 @@ Two hard facts from the dock side that shape the UI (HANDOFF §3):
 
 ## 1. Scope and phases
 
-The work splits into four phases with **different prerequisites**. Phase A
+The work splits into five phases with **different prerequisites**. Phase A
 needs no robot change at all and delivers most of the monitoring value, so it
 goes first.
 
@@ -119,8 +119,9 @@ belongs to `dock_manager`.
 
 ## 3. One derived dock status (`lib/dockStatus.js`)
 
-All pages read one function so the home card, Status page, alerts and the
-robot-status banner never disagree. Inputs: dock bridge online, `state`,
+All consumers read one function so the Dock page, the Status-page Charger
+card, the alerts, the top-bar chip and the robot-status banner never
+disagree. Inputs: dock bridge online, `state`,
 `microswitch`, `fault`, `charge_enable`, fresh `current`/`voltage`, docking
 action status (Phase C, may be absent). First match wins:
 
@@ -150,7 +151,7 @@ action status (Phase C, may be absent). First match wins:
   `batteryPercent()` (when the robot bridge is online), labelled "robot
   battery". Never show the dock's 0 V as the pack voltage.
 
-### 3.2 Charge session bookkeeping (client side, Phase A; backend in D)
+### 3.2 Charge session bookkeeping (client side, Phase A; backend in A2)
 
 The browser keeps a small in-memory record per page session: time of last
 `state == 3`, and a running sum of `current × Δt` while charging (2 Hz
@@ -204,7 +205,7 @@ bridge is offline:
   "accepted by the firmware only at 0 A".
 - **Self-test** → `self_test_cmd`; enabled only in state 0/5; result badge
   from `self_test_result` with timestamp; hint "≤ 2 s mains pulse with K1
-  open; only when nothing is seated".
+  open; only while the charger is cold (Empty or Docked · resting)".
 
 **5. Dock position card (Phase B)** — stored pose x/y/yaw, `saved_at`,
 `method`, staging distance; **Save dock at robot position** (same button
@@ -433,7 +434,8 @@ that the dock never uses — on the robot it comes from apt
 (`ros-jazzy-ublox-ubx-msgs`, installed under `/opt/ros/jazzy`), so add that
 package to the Dockerfile and the dock Pi, or (cleaner) add a CMake option
 `MOWBOT_BRIDGE_MINIMAL=ON` to the bridge that compiles out the
-GNSS/goto/manual-mow/power managers and their message deps. Start with the
+GNSS/goto/manual-mow managers and their message deps (the power and
+launch managers stay — the dock uses them). Start with the
 submodule route (zero bridge changes); switch to the CMake option if the
 qemu cross-build time hurts.
 
@@ -554,7 +556,7 @@ Float32 / BatteryState in `serializers.cpp` before writing the file.
 |---|---|
 | `lib/dockStatus.js` (new) | §3 function + `DOCK_STATE_NAME`, `DOCK_FAULT_TEXT` tables |
 | `hooks/useDock.js` (new) | one hook subscribing every `ros2/dock/*` topic, applying §2.4 freshness, returning `{online, state, seated, fault, chargeEnable, current, voltage, battery, event, fwVersion, status}`; the §3.2 client-side session accumulator lives here |
-| `pages/DockPage.jsx` (new) | §4.1 layout; sub-components `components/dock/{DockHeadline,ChargerDetail,DockMaintenance,DockPiCard}.jsx` |
+| `pages/DockPage.jsx` (new) | §4.1 layout; sub-components `components/dock/{DockHeadline,ChargerDetail,DockMaintenance,DockPiCard,DockPower}.jsx` now; `DockControl` (C), `DockPosition` (B), `DockSessions` (A2) slot in later |
 | `components/SideNav.jsx` + `App.jsx` | add `['dock', 'Dock']` to `PAGES` (after Map) and the `page === 'dock'` branch (pass `onShowLogs` like `LaunchPage`) |
 | `pages/StatusPage.jsx` | compact Charger card (§4.2) |
 | `components/AlertBanner.jsx` | §4.3 dock alerts |
@@ -636,8 +638,9 @@ against `config.datum`.
 
 ### 5.4 Phase D — polish
 
-HA docking buttons (§4.9, Phase C topics), Dock page restart buttons + Settings → Docking auto-dock toggle
-panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
+HA Dock/Undock buttons (§4.9, on the Phase C topics) and the Settings →
+Docking panel with the `auto_dock_on_low_battery` toggle (§4.5) once the
+bridge exposes that param.
 
 ## 6. Test checklists
 
@@ -696,7 +699,8 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
       running, e-stop, no dock pose, dock offline (Dock still allowed —
       docking needs zenoh, not MQTT — but warn).
 - [ ] Full Dock → Docking… phases → Docked; Cancel mid-approach; Undock →
-      dock goes cold before the robot moves (watch K1/K2 in the Charger card).
+      dock goes cold before the robot moves (watch K1/K2 in the Dock page's
+      charger detail card).
 - [ ] "Undock & start" runs the sequence and refuses if undock fails.
 
 ## 7. Deploy and ownership notes
@@ -704,7 +708,8 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 - Dock side builds only on the x86 workstation (`dock-build.sh` →
   `deploy.sh`), never on the Pi; never open VS Code Remote-SSH on the dock
   Pi (HANDOFF §5).
-- LXC steps (passwd, ACL append, mosquitto reload, frontend rsync + build,
+- LXC steps (passwd, ACL append, HA bridge rules, mosquitto restart,
+  frontend rsync + build,
   backend restart) are user-run; hand over exact commands.
 - Robot-side Phase B edits live in the web UI repo `robot/` and are
   installed on the robot Pi as today (fileserver + watcher restarts only —
