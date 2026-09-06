@@ -186,7 +186,7 @@ non-zero (with fault code); `self-test: OK/FAIL <when>`; `fw <version from
 EVT:BOOT/VER> · uptime`; last event line `<EVT…> <ago>`. Plus a
 `<details>` **raw battery_state** (what the docking server sees):
 voltage/current/percentage/status/present, `null` shown as "n/a (cold)"
-(Q 10).
+(decided 2026-09-06: keep, collapsed).
 
 **4. Maintenance panel** (owner-tested 2026-09-06, all three commands work
 against the real Nano). Always visible on this page (no collapsing — the
@@ -734,5 +734,5 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 7~~ | ~~HA entities?~~ **Resolved 2026-09-06: telemetry and commands** (§4.9): charging-allowed switch, clear-fault and self-test buttons now; Dock/Undock buttons with Phase C. No dock Pi power in HA. | — |
 | ~~Q 8~~ | ~~Dock Pi restart buttons?~~ **Resolved 2026-09-06: yes, plus reboot and shutdown** of the dock Pi from the Dock page, same mechanism and UI as the robot Pi (§4.1 item 6). | — |
 | Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
-| Q 10 | Should the dock's `battery_state` raw view (§4.1 item 3) exist, or is that only debugging clutter? | Keep, inside `<details>` |
+| ~~Q 10~~ | ~~Raw `battery_state` view?~~ **Resolved 2026-09-06: keep it**, collapsed in a `<details>` on the charger detail card (§4.1 item 3) — it shows exactly what the docking server is fed when a docking attempt fails to detect charging. | — |
 | ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |
