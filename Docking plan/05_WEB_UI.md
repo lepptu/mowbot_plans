@@ -15,7 +15,8 @@
 > in (tested OK against the real Nano); top-bar ⚡ while charging is in;
 > robot-status banner shows Charging / Docked; charge statistics on the
 > Dock page; HA gets telemetry **and** commands; dock Pi restart, reboot and
-> shutdown from the Dock page; backward docking.
+> shutdown from the Dock page; backward docking. **Q 9 (COMPLETE state) is
+> the only open item and does not block implementation.**
 
 ## 0. Where things stand
 
@@ -733,6 +734,6 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 6~~ | ~~Charge-session statistics?~~ **Resolved 2026-09-06: wanted, on the Dock page.** Built as Phase A2 (backend `dock_stats.py` + Dock page card, §4.8) since it needs only Phase A telemetry. | — |
 | ~~Q 7~~ | ~~HA entities?~~ **Resolved 2026-09-06: telemetry and commands** (§4.9): charging-allowed switch, clear-fault and self-test buttons now; Dock/Undock buttons with Phase C. No dock Pi power in HA. | — |
 | ~~Q 8~~ | ~~Dock Pi restart buttons?~~ **Resolved 2026-09-06: yes, plus reboot and shutdown** of the dock Pi from the Dock page, same mechanism and UI as the robot Pi (§4.1 item 6). | — |
-| Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
+| **Q 9 — OPEN** | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. Owner 2026-09-06: leaning firmware, still thinking — **do not block on it**; implement the UI against fw 0.1.4 behaviour (§0 fact 1, §3 rows 10/12) and revisit the wording when decided. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
 | ~~Q 10~~ | ~~Raw `battery_state` view?~~ **Resolved 2026-09-06: keep it**, collapsed in a `<details>` on the charger detail card (§4.1 item 3) — it shows exactly what the docking server is fed when a docking attempt fails to detect charging. | — |
 | ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |
