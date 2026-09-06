@@ -288,8 +288,8 @@ Dock page only.)
   - Keep-out hint: if the stored pose lies inside a mow-area outline, show
     "the dock sits inside area X — add a hole around it in the area editor"
     (04 §5).
-- No "delete dock" button in v1: re-recording is the correction path; a
-  `Clear` action can be added later if needed (Q 5).
+- No "delete dock" button (decided 2026-09-06): re-recording is the only
+  correction path.
 
 ### 4.5 Settings page — "Docking" panel (Phases C/D)
 
@@ -623,7 +623,7 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 2~~ | ~~Maintenance controls in the UI?~~ **Resolved 2026-09-06: yes** — owner tested Charging allowed / Clear fault / Self-test against the real Nano, all OK. Always visible on the Dock page, double-confirm. | — |
 | ~~Q 3~~ | ~~TopBar ⚡ while charging?~~ **Resolved 2026-09-06: yes.** | — |
 | ~~Q 4~~ | ~~Robot-status banner "Charging" / "Docked"?~~ **Resolved 2026-09-06: yes** — the strip at the top of the Mowbot and Status pages shows Charging / Docked instead of Idle whenever the robot sits in the dock (§4.3). | — |
-| Q 5 | Dock pose: any need to **clear** the stored dock pose, or is re-recording always enough? | No clear button |
+| ~~Q 5~~ | ~~Clear button for the dock pose?~~ **Resolved 2026-09-06: no.** Re-recording is the only correction path; an "enabled" toggle can be added later if the dock is ever removed for a season. | — |
 | Q 6 | Charge-session statistics (Ah, docked hours, burst count) — wanted, and in Phase D or earlier? | Phase D |
 | Q 7 | Home Assistant dock entities — telemetry-only, none, or also commands? | Telemetry-only, Phase D |
 | Q 8 | Dock Pi service restart buttons (now on the Dock page, §4.1 item 6) — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
