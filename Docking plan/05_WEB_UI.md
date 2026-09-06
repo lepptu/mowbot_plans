@@ -53,9 +53,12 @@ reach the bridge before its MQTT session is up, so on-change topics
 appeared on the broker. Fixed in the bridge (retained-topic cache replayed
 after each MQTT connect; verified on the robot: "replayed 14 retained
 topic(s)"); the dock picks it up on its next `dock-build.sh` + `deploy.sh`
-(submodule pointer bumped). Remaining: dock rebuild, HA device check in
-Home Assistant (no LXC account can read `homeassistant/#`, so it cannot be
-verified from the broker), the §6.1 checklist items not yet exercised.
+(submodule pointer bumped). Dock rebuilt and redeployed with the fix the same
+evening: "replayed 7 retained topic(s)", `ros2/dock/charge_enable` and
+`ros2/dock/firmware_version` (0.1.4) now retained on the broker. Remaining:
+HA device check in Home Assistant (no LXC account can read
+`homeassistant/#`, so it cannot be verified from the broker), the §6.1
+checklist items not yet exercised.
 Phase A2 (charge sessions) next.
 
 Deviations from the text below: the headline shows the robot's own
