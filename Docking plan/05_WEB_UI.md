@@ -153,7 +153,7 @@ The browser keeps a small in-memory record per page session: time of last
 samples). Used for the "last charged N min ago · ~0.4 Ah this session" line
 on the Docked-resting row. It resets on reload and is honest about it
 (shown only after at least one charging sample was seen). Persistent,
-authoritative session stats come from the backend in Phase D (§4.8).
+authoritative session stats come from the backend in Phase A2 (§4.8).
 
 ## 4. What is shown where
 
