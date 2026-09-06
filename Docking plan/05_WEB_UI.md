@@ -13,7 +13,9 @@
 > **Owner decisions 2026-09-06:** no dock card on the home page; the dock
 > gets **its own page** ("Dock" in the side nav); maintenance controls are
 > in (tested OK against the real Nano); top-bar ⚡ while charging is in;
-> robot-status banner shows Charging / Docked; backward docking.
+> robot-status banner shows Charging / Docked; charge statistics on the
+> Dock page; HA gets telemetry **and** commands; dock Pi restart, reboot and
+> shutdown from the Dock page; backward docking.
 
 ## 0. Where things stand
 
@@ -45,11 +47,11 @@ goes first.
 
 | Phase | Deliverable | Needs | Touches |
 |---|---|---|---|
-| **A — Telemetry** | New **Dock page** (status, live metrics, maintenance controls, dock Pi health), compact Charger card on the Status page, alerts, derived "Charging/Docked" robot status, top-bar ⚡, dock logs | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
+| **A — Telemetry** | New **Dock page** (status, live metrics, maintenance controls, dock Pi health + restart/reboot/shutdown), compact Charger card on the Status page, alerts, derived "Charging/Docked" robot status, top-bar ⚡, dock logs, HA telemetry + maintenance commands | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
 | **B — Dock pose** | Dock + staging markers on both maps; "Save dock at robot position"; "Place on map" fallback; `dock.json` on the robot fileserver | robot fileserver/watcher edits (small, in the web UI repo), backend endpoints | web UI repo (`robot/`, backend, frontend) |
 | **C — Control** | Dock / Undock / Cancel buttons with live action progress; "Undock & start"; docking reasons in plain English | 04 §2–3 (docking_server + `dock_manager`) | frontend, LXC ACL |
 | **A2 — Charge statistics** | Docked periods / bursts / Ah on the Dock page (§4.8) | A, plus a few real charge cycles for tuning | backend, frontend |
-| **D — Polish** | HA entities, auto-dock toggle, dock service restart buttons | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
+| **D — Polish** | auto-dock toggle, HA docking buttons (Phase C topics) | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
 
 Phase C UI can be built ahead of the robot side: it lights up when the
 retained `ros2/docking/status` topic first appears.
@@ -76,7 +78,8 @@ power_supply_status, power_supply_health, present}` with `null` for NaN).
 | `ros2/dock/event` | String | no | every message | `EVT:BOOT:<ver>`, `EVT:VER:<ver>` (60 s heartbeat), `EVT:SELFTEST:OK\|FAIL`, `EVT:EMERGENCY:SWITCH`, `EVT:NOCURRENT` |
 | `ros2/dock/pi/system` | bridge `system_stats` | no | 5 s | CPU/temp/RAM/disk/WiFi of the **dock Pi** — the same block the robot publishes on `ros2/pi/system` |
 | `ros2/dock/logs/{cmd,data,services}` | bridge `log_control` | services retained | on demand | journald for dock units |
-| `ros2/dock/launch/{cmd,status}` | bridge `launch_control` | status retained | on change | restart of dock units (Dock page, Phase D) |
+| `ros2/dock/launch/{cmd,status}` | bridge `launch_control` | status retained | on change | restart of dock units (Dock page) |
+| `ros2/dock/power/{cmd,status}` | bridge `power_control` | status retained | on change | reboot / shutdown of the dock Pi with ACK (Dock page) — same manager as the robot's `ros2/power/*` |
 
 Commands (webui → dock, **never retained**): `ros2/dock/charge_enable_cmd`,
 `ros2/dock/clear_fault_cmd`, `ros2/dock/self_test_cmd` (all `{"data": bool}`).
@@ -213,10 +216,32 @@ layer on. Placing by clicking stays on the map.
 dBm. Justified by the two dock-Pi incidents in HANDOFF §5 (WiFi power-save
 drop-outs, RAM exhaustion): RAM and WiFi signal are exactly what to watch on
 a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi
-< 30 %. Next to it, **Restart dock agent / Restart dock zenoh router**
-(Phase D, §4.5 — they live here rather than in Settings) and a "Dock logs"
-link into the Logs tab (`onShowLogs('dock_agent')`, the existing
-Launch-page pattern).
+< 30 %. Next to it (decided 2026-09-06, all in Phase A):
+
+- **Restart dock agent / Restart dock zenoh router** → `ros2/dock/launch/cmd
+  {id, action:"restart"}`, live unit state from `ros2/dock/launch/status`
+  (mirrors `SystemPanel`'s zenoh-restart button). Agent restart mid-charge
+  DTR-resets the Nano and drops the relays for a few seconds (HANDOFF §5) —
+  in the confirm text.
+- **Reboot dock Pi / Shut down dock Pi** — a `DockPower` panel that is the
+  robot's `RobotPower.jsx` with the topics swapped (`ros2/dock/power/cmd`,
+  retained `ros2/dock/power/status` `{state: idle|rebooting|shutting_down,
+  id}`, online gate = `ros2/dock/bridge_status`): `ConfirmModal`, shutdown
+  with type-to-confirm, in-flight banner until the LWT flips and the bridge
+  comes back. Confirm texts: *reboot* — "dock Pi ↔ Nano link drops ~1 min;
+  a running charge continues on the firmware's own interlocks (fault 4
+  'watchdog silence' is reported meanwhile and self-clears)"; *shutdown* —
+  "the dock Pi stays off until someone unplugs and re-plugs it — there is
+  no remote power-on. The Nano keeps its USB 5 V from the halted Pi and
+  keeps charging on its interlocks, but the web UI is blind until the Pi
+  is back." (Verify both claims on the bench, §6.1.) Factor the shared
+  parts of `RobotPower.jsx` into `PowerPanel.jsx` taking the topic names
+  as props rather than copy-pasting.
+- A "Dock logs" link into the Logs tab (`onShowLogs('dock_agent')`, the
+  existing Launch-page pattern).
+
+Dock Pi power stays **out of Home Assistant**, same as the robot Pi
+(existing decision).
 
 **7. Charge sessions card (Phase A2, §4.8)** — open period + last 10 docked
 periods + totals.
@@ -299,11 +324,8 @@ Dock page only.)
   `auto_dock_on_low_battery`, 04 §6) — Phase D, rendered only when the
   param appears in `ros2/mowparams/status` (same pattern as the gate
   toggles).
-- (Dock Pi service restart buttons live on the Dock page, §4.1 item 6:
-  `ros2/dock/launch/cmd {id, action:"restart"}` with live unit state from
-  `ros2/dock/launch/status`, mirroring `SystemPanel`'s zenoh-restart button.
-  Restarting the agent mid-charge DTR-resets the Nano and drops the relays
-  for a few seconds (HANDOFF §5) — put that in the confirm text.)
+- Dock Pi service restart / reboot / shutdown live on the Dock page (§4.1
+  item 6), not here.
 
 ### 4.6 Logs tab
 
@@ -349,15 +371,52 @@ lock, so dock bookkeeping never touches the mowing stats):
   periods have been observed (so the burst/period thresholds are tuned on
   real data), rather than waiting for Phase D.
 
-### 4.9 Home Assistant (Phase D, telemetry-only)
+### 4.9 Home Assistant — telemetry **and** commands (decided 2026-09-06)
 
-Dock bridge instance gets its own `homeassistant.yaml`: `binary_sensor`
-charging (state ∈ {2,3}), `binary_sensor` robot_seated, `sensor` charge
-current (A), charger voltage (V), dock state (enum text), dock fault (text),
-dock Pi WiFi/RAM. The LXC→HA bridge already exports `ros2/#` so **no LXC
-bridge-rule change** for telemetry. HA-side commands (charge enable) would
-need the `ha/ros2/` inbound rule convention — deliberately not in this plan
-(Q 7).
+The dock bridge instance gets its own `homeassistant.yaml`
+(`homeassistant_discovery:` in the dock `topics.yaml`; device "Mowbot
+Dock", availability = `ros2/dock/bridge_status`), published as retained
+discovery configs — so the `dock` broker account needs `topic write
+homeassistant/#` (the robot account already has it). Config-only work; it
+can ride with Phase A, Phase C adds the docking buttons.
+
+Telemetry entities (formulas identical to §3 / `lib/dockStatus.js`):
+`binary_sensor` Charging (state ∈ {2,3}), `binary_sensor` Robot seated
+(microswitch), `sensor` Charge current (A), Charger voltage (V), Dock state
+(text via a value_template map), Dock fault (text), `binary_sensor` Charging
+allowed, `sensor` Dock Pi WiFi (%) and RAM (%), `binary_sensor` Dock Pi
+online (from the LWT). `expire_after` on the volatile ones. The LXC→HA
+bridge already exports `ros2/#`, so telemetry needs **no LXC bridge-rule
+change**.
+
+Command entities follow the recorded `ha/ros2/` convention (HA publishes
+`ha/ros2/<topic>` on its own broker; the LXC imports it with the prefix
+stripped; **never retained**):
+
+| Entity | Component | `command_topic` (HA side) | Payload | State |
+|---|---|---|---|---|
+| Dock charging allowed | `switch` | `ha/ros2/dock/charge_enable_cmd` | `{"data": true}` / `{"data": false}` | `ros2/dock/charge_enable` |
+| Dock clear fault | `button` | `ha/ros2/dock/clear_fault_cmd` | `{"data": true}` | — |
+| Dock self-test | `button` | `ha/ros2/dock/self_test_cmd` | `{"data": true}` | result on `ros2/dock/self_test_result` as a `binary_sensor` |
+| Dock robot / Undock robot (Phase C) | `button` ×2 | `ha/ros2/docking/cmd` | `{"action": "dock"}` / `{"action": "undock"}` | `ros2/docking/status` as a `sensor` |
+
+No dock Pi power entities in HA (matches the robot decision).
+
+LXC `mowbot-remote.conf` needs one inbound rule per command (targeted
+append to the working copy **and** `/etc/mosquitto/conf.d/mowbot-remote.conf`):
+
+```
+topic dock/charge_enable_cmd in 1 ros2/ ha/ros2/
+topic dock/clear_fault_cmd   in 1 ros2/ ha/ros2/
+topic dock/self_test_cmd     in 1 ros2/ ha/ros2/
+topic docking/cmd            in 1 ros2/ ha/ros2/    # Phase C
+```
+
+followed by `systemctl restart mosquitto` — a reload does **not** apply
+bridge changes (recorded lesson). Loop-free for the same reason as the
+existing rules: only `ros2/#` is exported. Note the HA-side `switch` has no
+optimistic mode: its state follows the retained `ros2/dock/charge_enable`
+echo, which is why the §2.1 agent publisher is a prerequisite.
 
 ## 5. Implementation
 
@@ -436,10 +495,24 @@ launch_control:
   launches:
     dock_agent: { unit: mowbot-dock-agent.service }
     dock_zenoh: { unit: zenoh-dock-router.service }
+power_control:                       # reboot / shutdown of the dock Pi, same manager as the robot
+  cmd_topic: ros2/dock/power/cmd
+  status_topic: ros2/dock/power/status
+  grace_ms: 1500
+  actions: [reboot, shutdown]
+homeassistant_discovery: homeassistant.yaml   # §4.9 (device "Mowbot Dock")
 ```
 
-No `param_control`, `goto`, `power`, `manual_mow`, `homeassistant_discovery`
-sections (HA comes in Phase D). Verify at first run that the bridge accepts a
+`launch_control` and `power_control` exec `sudo -n systemctl …` (robot
+pattern, PLAN_POWER_CONTROL.md) — the dock's `ubuntu` user therefore needs
+passwordless sudo for those commands. `deploy.sh` already assumes `sudo -n
+systemctl restart` works; make it explicit in `PI_SETUP.md` with a scoped
+sudoers line rather than blanket NOPASSWD:
+`ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart mowbot-dock-agent.service, /usr/bin/systemctl restart mowbot-dock-mqtt-bridge.service, /usr/bin/systemctl restart zenoh-dock-router.service, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff`
+(check the exact argv the managers build before writing it — `launch_manager`
+may pass `start`/`stop` too).
+
+No `param_control`, `goto` or `manual_mow` sections. Verify at first run that the bridge accepts a
 config without those sections (they are optional in `bridge_config.cpp`).
 Check the exact serializer type strings the bridge expects for Int32 /
 Float32 / BatteryState in `serializers.cpp` before writing the file.
@@ -458,16 +531,21 @@ Float32 / BatteryState in `serializers.cpp` before writing the file.
   topic read ros2/dock/self_test_cmd
   topic read ros2/dock/logs/cmd
   topic read ros2/dock/launch/cmd
+  topic read ros2/dock/power/cmd
+  topic write homeassistant/#
   # under "user webui":
   topic write ros2/dock/charge_enable_cmd
   topic write ros2/dock/clear_fault_cmd
   topic write ros2/dock/self_test_cmd
   topic write ros2/dock/logs/cmd
   topic write ros2/dock/launch/cmd
+  topic write ros2/dock/power/cmd
   ```
 
-- `systemctl reload mosquitto` (ACL/passwd only — no bridge-rule change, so
-  no restart). `ros2/# out` already forwards dock telemetry to HA.
+- The HA command rules from §4.9 go into `mowbot-remote.conf` in the same
+  session, then `systemctl restart mosquitto` (bridge-rule changes need a
+  restart; a reload would suffice for ACL/passwd alone). `ros2/# out`
+  already forwards dock telemetry to HA.
 
 **A4 — frontend.**
 
@@ -480,6 +558,7 @@ Float32 / BatteryState in `serializers.cpp` before writing the file.
 | `pages/StatusPage.jsx` | compact Charger card (§4.2) |
 | `components/AlertBanner.jsx` | §4.3 dock alerts |
 | `components/TopBar.jsx` | ⚡ / 🔌 chip (§4.3) |
+| `components/RobotPower.jsx` → `PowerPanel.jsx` | topic names as props; `RobotPower` and `DockPower` become thin wrappers (§4.1 item 6) |
 | `lib/robotStatus.js` + `RobotStatusBanner.jsx` | Charging / Docked states, new `dock` input |
 | `pages/LogsPage.jsx` | multi-source (§4.6) |
 | `lib/telemetry.js` | `piSystem()` reuse; `dockPercent()` for §3.1 |
@@ -556,7 +635,7 @@ against `config.datum`.
 
 ### 5.4 Phase D — polish
 
-HA discovery file (§4.9), Dock page restart buttons + Settings → Docking auto-dock toggle
+HA docking buttons (§4.9, Phase C topics), Dock page restart buttons + Settings → Docking auto-dock toggle
 panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 
 ## 6. Test checklists
@@ -582,6 +661,19 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
       with "last seen", no alert; power back: recovers without a reload.
 - [ ] Logs tab: dock group lists four services; fetch works; robot group
       unaffected.
+- [ ] Restart dock agent from the Dock page while charging: relays drop,
+      `EVT:BOOT`, charge resumes by itself, no latched fault.
+- [ ] Reboot dock Pi from the Dock page mid-charge: ACK state shown, LWT
+      offline, charging continues (watch the robot's battery current /
+      the dock LED), fault 4 reported then self-clears, page recovers when
+      the bridge returns — no reload.
+- [ ] Shut down dock Pi (with the robot **not** seated, first time): halted
+      Pi still powers the Nano over USB (LED / bench meter); page shows
+      offline; physical re-plug brings everything back.
+- [ ] HA: dock device appears with all telemetry entities; "Dock charging
+      allowed" switch toggles and its state follows the echo; Clear fault
+      and Self-test buttons act (watch the dock page); nothing retained on
+      `ha/ros2/#`.
 - [ ] Top bar shows ⚡ while charging, 🔌 while docked-resting, nothing when
       the dock is offline.
 - [ ] Phone width: Dock page stacks cleanly; side-nav entry visible.
@@ -626,9 +718,8 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
   in firmware by design (02 §4).
 - Editing the dock pose numerically: recording by parking is the
   correction path; map-click covers the rough case.
-- Dock Pi power off/reboot: mains-powered station; nothing to gain, real
-  risk of stranding a charge session (mirrors the "no Pi power controls in
-  HA" decision).
+- Dock Pi power controls **in Home Assistant** (they exist in the web UI
+  only — mirrors the robot-Pi decision).
 
 ## 9. Open questions for the owner
 
@@ -640,8 +731,8 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 4~~ | ~~Robot-status banner "Charging" / "Docked"?~~ **Resolved 2026-09-06: yes** — the strip at the top of the Mowbot and Status pages shows Charging / Docked instead of Idle whenever the robot sits in the dock (§4.3). | — |
 | ~~Q 5~~ | ~~Clear button for the dock pose?~~ **Resolved 2026-09-06: no.** Re-recording is the only correction path; an "enabled" toggle can be added later if the dock is ever removed for a season. | — |
 | ~~Q 6~~ | ~~Charge-session statistics?~~ **Resolved 2026-09-06: wanted, on the Dock page.** Built as Phase A2 (backend `dock_stats.py` + Dock page card, §4.8) since it needs only Phase A telemetry. | — |
-| Q 7 | Home Assistant dock entities — telemetry-only, none, or also commands? | Telemetry-only, Phase D |
-| Q 8 | Dock Pi service restart buttons (now on the Dock page, §4.1 item 6) — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
+| ~~Q 7~~ | ~~HA entities?~~ **Resolved 2026-09-06: telemetry and commands** (§4.9): charging-allowed switch, clear-fault and self-test buttons now; Dock/Undock buttons with Phase C. No dock Pi power in HA. | — |
+| ~~Q 8~~ | ~~Dock Pi restart buttons?~~ **Resolved 2026-09-06: yes, plus reboot and shutdown** of the dock Pi from the Dock page, same mechanism and UI as the robot Pi (§4.1 item 6). | — |
 | Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
 | Q 10 | Should the dock's `battery_state` raw view (§4.1 item 3) exist, or is that only debugging clutter? | Keep, inside `<details>` |
 | ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |
