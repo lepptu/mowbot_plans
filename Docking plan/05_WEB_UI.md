@@ -13,7 +13,7 @@
 > **Owner decisions 2026-09-06:** no dock card on the home page; the dock
 > gets **its own page** ("Dock" in the side nav); maintenance controls are
 > in (tested OK against the real Nano); top-bar ⚡ while charging is in;
-> backward docking.
+> robot-status banner shows Charging / Docked; backward docking.
 
 ## 0. Where things stand
 
@@ -622,7 +622,7 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 1~~ | ~~Home page dock card?~~ **Resolved 2026-09-06: no.** Home page unchanged; the dock gets its own page (§4.1) plus a compact Charger card on Status (§4.2). | — |
 | ~~Q 2~~ | ~~Maintenance controls in the UI?~~ **Resolved 2026-09-06: yes** — owner tested Charging allowed / Clear fault / Self-test against the real Nano, all OK. Always visible on the Dock page, double-confirm. | — |
 | ~~Q 3~~ | ~~TopBar ⚡ while charging?~~ **Resolved 2026-09-06: yes.** | — |
-| Q 4 | Robot-status banner: "Charging" / "Docked" as first-class states (they replace "Idle" whenever the robot sits in the dock)? | Yes |
+| ~~Q 4~~ | ~~Robot-status banner "Charging" / "Docked"?~~ **Resolved 2026-09-06: yes** — the strip at the top of the Mowbot and Status pages shows Charging / Docked instead of Idle whenever the robot sits in the dock (§4.3). | — |
 | Q 5 | Dock pose: any need to **clear** the stored dock pose, or is re-recording always enough? | No clear button |
 | Q 6 | Charge-session statistics (Ah, docked hours, burst count) — wanted, and in Phase D or earlier? | Phase D |
 | Q 7 | Home Assistant dock entities — telemetry-only, none, or also commands? | Telemetry-only, Phase D |
