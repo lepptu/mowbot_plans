@@ -233,13 +233,14 @@ a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi <
 
 - **Markers** on `RobotMap` and `MiniMap`: dock marker at the stored pose
   (🔌 divIcon rotated to yaw, like the robot marker) and a small dashed
-  circle at the computed staging pose. Staging = stored pose shifted
-  `staging_offset_m` **against the approach direction**: `pose − offset·yaw`
-  for forward docking (04 §2.1 `dock_backwards: false`, README D10) but
-  `pose + offset·yaw` if the robot docks backwards as `mowbot_dock`
-  HANDOFF §4 states — **the two documents disagree (Q 11)**; the UI reads
-  the direction from a `dock_backwards` field in `dock.json` so the marker
-  and the robot side can never diverge. `LayersPanel` gains a "Dock"
+  circle at the computed staging pose. **The robot docks backwards**
+  (charging contacts on the rear — decided 2026-09-06, README D10 rev.),
+  so the stored pose's yaw (robot heading when seated) points *away* from
+  the dock and the staging pose lies **in front of the seated robot**:
+  `staging = pose + staging_offset_m · (cos yaw, sin yaw)`. The dock
+  marker icon is drawn with its "mouth" on that side. `dock.json` still
+  carries `dock_backwards: true` so the marker math and the robot side
+  (04 §2.1) share one source of truth. `LayersPanel` gains a "Dock"
   visibility toggle (persisted like the others).
 - **DockPanel** ("🔌 Dock position"), mutually exclusive with the editor /
   recorder / coverage / goto panels (add to the `RobotMap` exclusivity
@@ -252,7 +253,9 @@ a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi <
     is recording while parked). Shows the backend's RTK sanity note from the
     response.
   - **Place on map** (fallback): click 1 = dock position, click 2 = the
-    point the robot approaches *from*; yaw = bearing from click 2 to click 1.
+    point the robot approaches *from*; yaw = bearing from click **1 to
+    click 2** (the seated robot faces away from the dock, toward where it
+    came from).
     Two-step confirm, method `map_click`. Marked "rough — re-record by
     parking before first autonomous dock".
   - **Staging distance** number input (0.5–1.5 m, default 0.7) stored in
@@ -482,7 +485,7 @@ this one reads broker creds from it; unchanged here.)
   ```json
   { "pose": { "x": 12.34, "y": -5.67, "yaw": 1.571, "frame": "map" },
     "staging_offset_m": 0.7,
-    "dock_backwards": false,
+    "dock_backwards": true,
     "saved_at": "2026-09-06T10:15:00Z",
     "method": "robot_pose" | "map_click" }
   ```
@@ -598,4 +601,4 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | Q 8 | Dock Pi service restart buttons in Settings — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
 | Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
 | Q 10 | Should the dock's `battery_state` raw view (§4.2) exist, or is that only debugging clutter? | Keep, inside `<details>` |
-| Q 11 | **Forward or backward docking?** Plan 04 / README D10 say forward (contacts at the front, `dock_backwards: false`); `mowbot_dock` HANDOFF §4 says the robot docks backwards with contacts on the rear. Which is the built robot? | `dock.json` carries `dock_backwards`; marker math follows it; 04 needs the same fix |
+| ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |

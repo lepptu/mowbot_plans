@@ -221,17 +221,15 @@ drivers, and the passives. Hand-soldered; 90° trace corners are fine.
 
 ### 4.1 Contact system (dock ⇄ robot)
 
-Commercial-mower pattern, forward drive-in:
+Commercial-mower pattern, **reverse-in** (as built: robot contacts on the rear, README D10 rev. 2026-09-06):
 
 - **Dock:** two vertical spring-loaded contact blades (leaf springs) or
   heavy pogo-style plungers on a small tower/back wall, ~40–60 mm
   horizontal separation, faces angled so the robot's plates **wipe**
   across them on entry (self-cleaning against oxidation).
 - **Robot:** two fixed plates (stainless or nickel-plated brass,
-  ~20×40 mm) on the front chassis face, mounted on the rigid chassis —
-  **not** on the moving bumper (the bumper must still be able to
-  trigger without breaking the charge path; verify the bumper's travel
-  clears the plates).
+  ~20×40 mm) on the **rear** chassis face, mounted on the rigid chassis
+  (the front bumper is uninvolved and keeps its full travel).
 - Polarity safety: make the geometry asymmetric (plates at different
   heights, or one wide/one narrow) so reversed contact is mechanically
   impossible; the robot-side ideal diode is the electrical backstop.

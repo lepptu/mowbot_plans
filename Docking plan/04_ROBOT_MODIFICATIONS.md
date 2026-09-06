@@ -16,8 +16,9 @@ charge input (parallel with the existing charge jack, through the BMS
 charge port); **0 V on the pads whenever undocked confirmed** — the
 exact property the dock side (01 §5) relies on.
 
-- Two contact plates on the front chassis face (rigid chassis, clear of
-  bumper travel), asymmetric geometry for polarity safety.
+- Two contact plates on the **rear** chassis face (as built; the robot
+  backs into the dock — README D10 rev. 2026-09-06), asymmetric geometry
+  for polarity safety.
 - Still open (needs the dock to exist): plates wipe the dock springs
   over the full funnel tolerance (±3 cm entry) — part of the 01 §8
   assembly checks.
@@ -38,7 +39,7 @@ docking_server:
     max_retries: 3
     base_frame: "base_link"
     fixed_frame: "odom"                # dock pose transformed map→odom once at action start; odom is smooth for control
-    dock_backwards: false              # forward docking (README D10)
+    dock_backwards: true               # robot BACKS into the dock, contacts on the rear (README D10 rev. 2026-09-06)
     dock_prestaging_tolerance: 0.5
     dock_plugins: ["mowbot_dock_plugin"]
     mowbot_dock_plugin:
@@ -48,7 +49,7 @@ docking_server:
       charging_threshold: 0.15             # A — dock ACS712 reads ~2 A when charging
       use_stall_detection: false
       docking_threshold: 0.05              # pose-based isDocked tolerance; tune vs RTK jitter
-      staging_x_offset: -0.7               # staging pose 0.7 m behind dock pose along approach axis
+      staging_x_offset: -0.7               # staging pose 0.7 m out along the approach axis — VERIFY sign/semantics for dock_backwards in 1.3.10 (staging must land in FRONT of the seated robot, i.e. +0.7 m along the recorded yaw; check whether the server also expects staging_yaw_offset: 3.14159 or handles the 180° turn itself)
       filter_coef: 0.1
     controller:
       k_phi: 3.0

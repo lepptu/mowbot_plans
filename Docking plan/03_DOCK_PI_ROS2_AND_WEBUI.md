@@ -257,7 +257,7 @@ First-time commissioning:
    on, 42 V ramp, current flows — hardware is now proven end-to-end).
 4. Press **"Save dock at robot position"**. Done — pose recorded in the
    exact localization frame docking will use.
-5. Undock (Undock button, or drive out backward), then press **Dock**
+5. Undock (Undock button, or drive out forward), then press **Dock**
    from ~3 m away and watch the first autonomous docking. Repeat from a
    few directions/distances.
 
