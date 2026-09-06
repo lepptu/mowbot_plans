@@ -48,7 +48,8 @@ goes first.
 | **A — Telemetry** | New **Dock page** (status, live metrics, maintenance controls, dock Pi health), compact Charger card on the Status page, alerts, derived "Charging/Docked" robot status, top-bar ⚡, dock logs | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
 | **B — Dock pose** | Dock + staging markers on both maps; "Save dock at robot position"; "Place on map" fallback; `dock.json` on the robot fileserver | robot fileserver/watcher edits (small, in the web UI repo), backend endpoints | web UI repo (`robot/`, backend, frontend) |
 | **C — Control** | Dock / Undock / Cancel buttons with live action progress; "Undock & start"; docking reasons in plain English | 04 §2–3 (docking_server + `dock_manager`) | frontend, LXC ACL |
-| **D — Polish** | Charge-session statistics, HA entities, auto-dock toggle, dock service restart buttons | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
+| **A2 — Charge statistics** | Docked periods / bursts / Ah on the Dock page (§4.8) | A, plus a few real charge cycles for tuning | backend, frontend |
+| **D — Polish** | HA entities, auto-dock toggle, dock service restart buttons | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
 
 Phase C UI can be built ahead of the robot side: it lights up when the
 retained `ros2/docking/status` topic first appears.
@@ -217,7 +218,8 @@ a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi
 link into the Logs tab (`onShowLogs('dock_agent')`, the existing
 Launch-page pattern).
 
-**7. Charge sessions table (Phase D, §4.8)** — last 10 docked periods.
+**7. Charge sessions card (Phase A2, §4.8)** — open period + last 10 docked
+periods + totals.
 
 Phase C additions outside this page: when `physically_docked` and the
 mission is idle, the mission **Start** button in `MissionControl` (home
@@ -320,19 +322,32 @@ never collide.
 
 Nothing. Dock units are always-on; restart buttons live on the Dock page.
 
-### 4.8 Statistics — charge sessions (Phase D)
+### 4.8 Charge-session statistics — on the Dock page (decided 2026-09-06: wanted)
 
-Backend `stats.py` already consumes the broker; extend it (or add
-`dock_stats.py`) subscribing `ros2/dock/#`:
+Shown as the last card of the Dock page (§4.1 item 7), not under the
+robot's `Statistics`. Backend `stats.py` already consumes the broker; add a
+sibling `dock_stats.py` subscribing `ros2/dock/#` (own JSON file, own
+lock, so dock bookkeeping never touches the mowing stats):
 
 - A **charge burst** = `state` enters {2,3} → leaves to {0,4,5}. Ah =
   Σ current·Δt (2 Hz samples), peak A, end charger voltage.
 - A **docked period** = microswitch true … false; contains N bursts. This
   is the unit shown to the user (bursts merged), because of the top-up
   cycling: "Docked 2 h 14 min · 3 bursts · 1.8 Ah · ended 41.9 V".
-- Store last 50 periods in the stats JSON; expose `GET /api/dock/sessions`;
-  a small table under `Statistics` (last 10) plus totals (Ah, hours docked).
-- Phase D because it only becomes meaningful once docking is routine (Q 6).
+- Store the last 50 periods in `dock_sessions.json`; expose
+  `GET /api/dock/sessions` → `{current, periods[], totals}` where `current`
+  is the open period (live "docked since … · 2 bursts · 0.9 Ah so far").
+- Dock page card: the open period on top, then a table of the last 10
+  (start, duration, bursts, Ah, end voltage, faults seen), then totals
+  (periods, hours docked, Ah). Refreshed every 10 s like the event markers.
+- Robustness: a backend restart mid-period closes nothing — the open period
+  is persisted with each save and resumes if the microswitch is still true
+  on restart; a dock-bridge LWT offline gap inside a period is recorded as
+  `gaps: n` rather than ending it (charging continues autonomously).
+- Phasing: no robot dependency — it needs only Phase A telemetry. Build it
+  as **Phase A2**, right after the Dock page is live and the first real
+  periods have been observed (so the burst/period thresholds are tuned on
+  real data), rather than waiting for Phase D.
 
 ### 4.9 Home Assistant (Phase D, telemetry-only)
 
@@ -541,7 +556,7 @@ against `config.datum`.
 
 ### 5.4 Phase D — polish
 
-Charge-session stats (§4.8), HA discovery file (§4.9), Dock page restart buttons + Settings → Docking auto-dock toggle
+HA discovery file (§4.9), Dock page restart buttons + Settings → Docking auto-dock toggle
 panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 
 ## 6. Test checklists
@@ -624,7 +639,7 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 | ~~Q 3~~ | ~~TopBar ⚡ while charging?~~ **Resolved 2026-09-06: yes.** | — |
 | ~~Q 4~~ | ~~Robot-status banner "Charging" / "Docked"?~~ **Resolved 2026-09-06: yes** — the strip at the top of the Mowbot and Status pages shows Charging / Docked instead of Idle whenever the robot sits in the dock (§4.3). | — |
 | ~~Q 5~~ | ~~Clear button for the dock pose?~~ **Resolved 2026-09-06: no.** Re-recording is the only correction path; an "enabled" toggle can be added later if the dock is ever removed for a season. | — |
-| Q 6 | Charge-session statistics (Ah, docked hours, burst count) — wanted, and in Phase D or earlier? | Phase D |
+| ~~Q 6~~ | ~~Charge-session statistics?~~ **Resolved 2026-09-06: wanted, on the Dock page.** Built as Phase A2 (backend `dock_stats.py` + Dock page card, §4.8) since it needs only Phase A telemetry. | — |
 | Q 7 | Home Assistant dock entities — telemetry-only, none, or also commands? | Telemetry-only, Phase D |
 | Q 8 | Dock Pi service restart buttons (now on the Dock page, §4.1 item 6) — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
 | Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
