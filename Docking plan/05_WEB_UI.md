@@ -10,6 +10,10 @@
 >
 > Open decisions for the owner are collected in **§9** — items marked
 > **(Q n)** in the text depend on them; everything else is decided.
+> **Owner decisions 2026-09-06:** no dock card on the home page; the dock
+> gets **its own page** ("Dock" in the side nav); maintenance controls are
+> in (tested OK against the real Nano); top-bar ⚡ while charging is in;
+> backward docking.
 
 ## 0. Where things stand
 
@@ -41,7 +45,7 @@ goes first.
 
 | Phase | Deliverable | Needs | Touches |
 |---|---|---|---|
-| **A — Telemetry** | Dock/charger status everywhere it matters: home page card, Status-page cards, alerts, derived "Charging/Docked" robot status, dock Pi health, dock logs | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
+| **A — Telemetry** | New **Dock page** (status, live metrics, maintenance controls, dock Pi health), compact Charger card on the Status page, alerts, derived "Charging/Docked" robot status, top-bar ⚡, dock logs | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
 | **B — Dock pose** | Dock + staging markers on both maps; "Save dock at robot position"; "Place on map" fallback; `dock.json` on the robot fileserver | robot fileserver/watcher edits (small, in the web UI repo), backend endpoints | web UI repo (`robot/`, backend, frontend) |
 | **C — Control** | Dock / Undock / Cancel buttons with live action progress; "Undock & start"; docking reasons in plain English | 04 §2–3 (docking_server + `dock_manager`) | frontend, LXC ACL |
 | **D — Polish** | Charge-session statistics, HA entities, auto-dock toggle, dock service restart buttons | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
@@ -152,64 +156,83 @@ authoritative session stats come from the backend in Phase D (§4.8).
 
 ## 4. What is shown where
 
-### 4.1 Mowbot (home) page — `DockCard`
+### 4.1 Dock page (new, `pages/DockPage.jsx`, side-nav entry "Dock")
 
-Placed directly under `MissionControl` (the dock is where a mission starts
-and ends; the cockpit should show it). Compact:
+Everything dock-related lives on one page; the home page stays as it is
+(owner decision). Layout, top to bottom, all built from `useDock()` + §3:
 
-```
-🔌 Dock — Charging                              [dock Pi ● online]
-    2.1 A · 41.2 V · ~85 % under charge · 12 min
-    [ Dock ] [ Undock ] [ Cancel ]        ← Phase C, hidden until ros2/docking/status exists
-```
+**1. Headline panel** — the §3 status, large, with tone colour; a "dock Pi
+● online / offline (last seen …)" dot; and under it the live metrics line:
+`2.1 A · 41.2 V · ~85 % under charge · charging 12 min` (or the robot's
+battery voltage while the charger is cold, §3.1).
 
-- Headline + tone from §3, one metrics line, small "dock Pi" dot from the
-  LWT.
-- Phase C: buttons, guarded exactly like `MissionControl` (robot bridge
-  online, mission process not running or mission idle, not e-stopped;
-  Dock/Undock double-confirm; Cancel immediate). Disabled reasons shown as
-  tooltips/hints, refusals from `ros2/docking/status.error_code` mapped via
-  a `DOCK_REASON_TEXT` table like `GoToPanel`'s `REASON_TEXT`.
-- Phase C: when `physically_docked` and mission is idle, the mission
-  **Start** button in `MissionControl` shows "Undock & start" (04 §6): UI
-  sends `undock`, waits for docking status `idle` + `microswitch false`
-  (30 s watchdog), then `start`. A mission refusal reason `docked` gets a
-  `REASON_TEXT` entry: "robot is in the dock — Undock first".
-- No maintenance controls here (they live on the Status page).
+**2. Control row (Phase C, hidden until `ros2/docking/status` exists):**
+`[ Dock ] [ Undock ] [ Cancel ]`, guarded exactly like `MissionControl`
+(robot bridge online, mission process not running or mission idle, not
+e-stopped; Dock/Undock double-confirm; Cancel immediate). Disabled reasons
+shown as hints, refusals from `ros2/docking/status.error_code` mapped via a
+`DOCK_REASON_TEXT` table like `GoToPanel`'s `REASON_TEXT`. Below the
+buttons the action progress line (phase, retries, elapsed) while an action
+runs.
 
-### 4.2 Status page — two cards
+**3. Charger detail card** — the hardware as it is right now:
+`state <name> · switch <seated/free> · K1 <on/off> · K2 <on/off>`;
+`current · charger voltage`; `charging allowed: yes/no`; fault text when
+non-zero (with fault code); `self-test: OK/FAIL <when>`; `fw <version from
+EVT:BOOT/VER> · uptime`; last event line `<EVT…> <ago>`. Plus a
+`<details>` **raw battery_state** (what the docking server sees):
+voltage/current/percentage/status/present, `null` shown as "n/a (cold)"
+(Q 10).
 
-**Charger** card (in the cards grid, after Battery):
+**4. Maintenance panel** (owner-tested 2026-09-06, all three commands work
+against the real Nano). Always visible on this page (no collapsing — the
+page exists for this), every button double-confirm, disabled when the dock
+bridge is offline:
 
-- value = headline from §3, tone likewise.
-- detail lines: `state <name> · switch <seated/free> · K1 <on/off> · K2
-  <on/off>`; `current · charger voltage`; fault text when non-zero;
-  `self-test: OK/FAIL <when>`; `fw <version from EVT:BOOT/VER> · last event
-  <EVT…> <ago>`.
-- `<details>` **Maintenance** (collapsed; every button double-confirm,
-  disabled when dock offline):
-  - **Charging allowed** on/off → `charge_enable_cmd`. Off while charging
-    runs the sequenced shutdown (AC off → drain → K1 open) — say so in the
-    confirm text. State shown from `ros2/dock/charge_enable` (§2.1 gap).
-    Turning it **off→on while docked-resting** is also the manual
-    "top up now" action (02 §4 re-entry rule); label the on-button
-    "Enable (starts a charge if seated)".
-  - **Clear fault** → `clear_fault_cmd`; enabled only for fault 1/2; hint
-    "accepted by the firmware only at 0 A".
-  - **Self-test** → `self_test_cmd`; enabled only in state 0/5; result badge
-    from `self_test_result` with timestamp; hint "≤ 2 s mains pulse with K1
-    open; only when nothing is seated".
-  - `<details>` **raw battery_state** (what the docking server sees):
-    voltage/current/percentage/status/present, `null` shown as "n/a (cold)".
-  - Note in the UI: these three commands are implemented but were **never
-    exercised against the real Nano** (HANDOFF §6) — the first use is a test.
+- **Charging allowed** on/off → `charge_enable_cmd`. Off while charging
+  runs the sequenced shutdown (AC off → drain → K1 open) — say so in the
+  confirm text. State shown from `ros2/dock/charge_enable` (§2.1 gap).
+  Turning it **off→on while docked-resting** is also the manual "top up
+  now" action (02 §4 re-entry rule); label the on-button "Enable (starts a
+  charge if seated)".
+- **Clear fault** → `clear_fault_cmd`; enabled only for fault 1/2; hint
+  "accepted by the firmware only at 0 A".
+- **Self-test** → `self_test_cmd`; enabled only in state 0/5; result badge
+  from `self_test_result` with timestamp; hint "≤ 2 s mains pulse with K1
+  open; only when nothing is seated".
 
-**Dock Pi** card (next to the robot's "Raspberry Pi" card, same renderer
-`piSystem()` reused on `ros2/dock/pi/system`): CPU, temp, RAM %, disk, WiFi %
-and dBm. Justified by the two dock-Pi incidents in HANDOFF §5 (WiFi power-save
+**5. Dock position card (Phase B)** — stored pose x/y/yaw, `saved_at`,
+`method`, staging distance; **Save dock at robot position** (same button
+and pre-checks as the map panel, §4.4 — the setup flow should not require
+the map) and a "Show on map" link that opens the Map tab with the Dock
+layer on. Placing by clicking stays on the map.
+
+**6. Dock Pi card** — same renderer as the robot's "Raspberry Pi" card
+(`piSystem()` on `ros2/dock/pi/system`): CPU, temp, RAM %, disk, WiFi % and
+dBm. Justified by the two dock-Pi incidents in HANDOFF §5 (WiFi power-save
 drop-outs, RAM exhaustion): RAM and WiFi signal are exactly what to watch on
-a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi <
-30 %.
+a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi
+< 30 %. Next to it, **Restart dock agent / Restart dock zenoh router**
+(Phase D, §4.5 — they live here rather than in Settings) and a "Dock logs"
+link into the Logs tab (`onShowLogs('dock_agent')`, the existing
+Launch-page pattern).
+
+**7. Charge sessions table (Phase D, §4.8)** — last 10 docked periods.
+
+Phase C additions outside this page: when `physically_docked` and the
+mission is idle, the mission **Start** button in `MissionControl` (home
+page) shows "Undock & start" (04 §6): UI sends `undock`, waits for docking
+status `idle` + `microswitch false` (30 s watchdog), then `start`. A mission
+refusal reason `docked` gets a `REASON_TEXT` entry: "robot is in the dock —
+Undock first".
+
+### 4.2 Status page — one compact card
+
+**Charger** card in the cards grid after Battery: value = §3 headline, tone
+likewise, detail = `current · charger voltage · state name` and a "→ Dock
+page" link. No controls here; the Status page stays the all-telemetry
+overview and the Dock page is where you act. (The Dock Pi card is on the
+Dock page only.)
 
 ### 4.3 Global
 
@@ -227,7 +250,9 @@ a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi <
     "resting" / "charged");
   - dock offline → no claim (falls through to Idle). The robot's own battery
     voltage *rising* is deliberately not used as a charging heuristic.
-- **TopBar**: a ⚡ next to the battery chip while §3 says Charging (Q 3).
+- **TopBar**: a ⚡ next to the battery chip while §3 says Charging, and a
+  🔌 while Docked · resting (decided: yes). Uses the same `useDock()` hook;
+  hidden entirely when the dock bridge is offline.
 
 ### 4.4 Map tab — `DockPanel` + markers (Phase B)
 
@@ -272,11 +297,11 @@ a Pi 3B with 900 MB and no wired link. Tone: warn when RAM > 85 % or WiFi <
   `auto_dock_on_low_battery`, 04 §6) — Phase D, rendered only when the
   param appears in `ros2/mowparams/status` (same pattern as the gate
   toggles).
-- **Dock Pi services**: Restart dock agent / Restart dock zenoh router →
-  `ros2/dock/launch/cmd {id, action:"restart"}`, with live unit state from
-  `ros2/dock/launch/status`. Mirrors `SystemPanel`'s zenoh-restart button.
+- (Dock Pi service restart buttons live on the Dock page, §4.1 item 6:
+  `ros2/dock/launch/cmd {id, action:"restart"}` with live unit state from
+  `ros2/dock/launch/status`, mirroring `SystemPanel`'s zenoh-restart button.
   Restarting the agent mid-charge DTR-resets the Nano and drops the relays
-  for a few seconds (HANDOFF §5) — put that in the confirm text.
+  for a few seconds (HANDOFF §5) — put that in the confirm text.)
 
 ### 4.6 Logs tab
 
@@ -293,7 +318,7 @@ never collide.
 
 ### 4.7 Launch tab
 
-Nothing. Dock units are always-on; restart buttons live in Settings → Docking.
+Nothing. Dock units are always-on; restart buttons live on the Dock page.
 
 ### 4.8 Statistics — charge sessions (Phase D)
 
@@ -435,14 +460,15 @@ Float32 / BatteryState in `serializers.cpp` before writing the file.
 |---|---|
 | `lib/dockStatus.js` (new) | §3 function + `DOCK_STATE_NAME`, `DOCK_FAULT_TEXT` tables |
 | `hooks/useDock.js` (new) | one hook subscribing every `ros2/dock/*` topic, applying §2.4 freshness, returning `{online, state, seated, fault, chargeEnable, current, voltage, battery, event, fwVersion, status}`; the §3.2 client-side session accumulator lives here |
-| `components/DockCard.jsx` (new) | §4.1 |
-| `pages/MowbotPage.jsx` | mount `DockCard` under `MissionControl` |
-| `pages/StatusPage.jsx` | Charger + Dock Pi cards (§4.2); `DockMaintenance.jsx` for the `<details>` block |
+| `pages/DockPage.jsx` (new) | §4.1 layout; sub-components `components/dock/{DockHeadline,ChargerDetail,DockMaintenance,DockPiCard}.jsx` |
+| `components/SideNav.jsx` + `App.jsx` | add `['dock', 'Dock']` to `PAGES` (after Map) and the `page === 'dock'` branch (pass `onShowLogs` like `LaunchPage`) |
+| `pages/StatusPage.jsx` | compact Charger card (§4.2) |
 | `components/AlertBanner.jsx` | §4.3 dock alerts |
+| `components/TopBar.jsx` | ⚡ / 🔌 chip (§4.3) |
 | `lib/robotStatus.js` + `RobotStatusBanner.jsx` | Charging / Docked states, new `dock` input |
 | `pages/LogsPage.jsx` | multi-source (§4.6) |
 | `lib/telemetry.js` | `piSystem()` reuse; `dockPercent()` for §3.1 |
-| `styles.css` | `.dock-card`, badge styles |
+| `styles.css` | `.dock-page`, `.dock-headline`, badge styles |
 
 Deploy: existing LXC rsync + `npm run build` recipe (user-run).
 
@@ -500,7 +526,7 @@ against `config.datum`.
 ### 5.3 Phase C — control (after 04 §2–3 exist)
 
 - LXC ACL: `user webui` + `topic write ros2/docking/cmd` (04 §7).
-- `DockCard` buttons + `DOCK_REASON_TEXT` (mirror `dock_manager`'s reason
+- Dock page control row (§4.1 item 2) + `DOCK_REASON_TEXT` (mirror `dock_manager`'s reason
   codes: `estop`, `mission_active`, `mission_state_unknown`, `no_dock_pose`,
   `nav2_unavailable`, `nav2_timeout`, `failed_to_charge`,
   `failed_to_detect_dock`, `cancel_timeout`, `not_docked` (undock while not
@@ -524,8 +550,8 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 
 - [ ] Dock Pi: `mowbot-dock-mqtt-bridge` up, `ros2/dock/bridge_status`
       retained `online:true` on the LXC (`mosquitto_sub -v -t 'ros2/dock/#'`).
-- [ ] Robot **off**: dock card live on the home page and Status page; state 0
-      / Empty; Dock Pi card shows WiFi + RAM.
+- [ ] Robot **off**: Dock page live, state 0 / Empty; Status page Charger
+      card agrees; Dock Pi card shows WiFi + RAM; home page unchanged.
 - [ ] `free -m` on the dock Pi after 24 h with both services: no swap
       thrash (HANDOFF §5 history).
 - [ ] Seat the robot manually: card walks Seated → Charging within ~1 s;
@@ -534,14 +560,16 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
       appears; a top-up burst later flips it back to Charging.
 - [ ] Charging allowed → off mid-charge: sequenced shutdown visible (K2 off,
       DRAIN, K1 off, Empty/resting), alert "charging is disabled" while
-      seated; → on: charge restarts. (First real-Nano exercise of this path.)
+      seated; → on: charge restarts.
 - [ ] Self-test from Empty: result badge + timestamp; try it during charging:
       firmware ignores it, UI button was disabled anyway.
 - [ ] Unplug the dock Pi's power: LWT flips within the keepalive, cards grey
       with "last seen", no alert; power back: recovers without a reload.
 - [ ] Logs tab: dock group lists four services; fetch works; robot group
       unaffected.
-- [ ] Phone width: DockCard and the two Status cards stay readable.
+- [ ] Top bar shows ⚡ while charging, 🔌 while docked-resting, nothing when
+      the dock is offline.
+- [ ] Phone width: Dock page stacks cleanly; side-nav entry visible.
 
 ### 6.2 Phase B
 
@@ -591,14 +619,14 @@ panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 
 | # | Question | Plan's default if unanswered |
 |---|---|---|
-| Q 1 | Home page: is a **dock card under Mission control** the right spot, or would you rather keep the home page as-is and put everything on the Status page? | Home card (§4.1) + Status detail |
-| Q 2 | Maintenance controls (Charging allowed / Clear fault / Self-test) — in the web UI at all, given they are untested on the real Nano? Or keep them CLI-only until exercised once? | In the UI, collapsed, double-confirm, with the "untested" note |
-| Q 3 | TopBar ⚡ on the battery chip while charging — want it? | Yes, tiny |
+| ~~Q 1~~ | ~~Home page dock card?~~ **Resolved 2026-09-06: no.** Home page unchanged; the dock gets its own page (§4.1) plus a compact Charger card on Status (§4.2). | — |
+| ~~Q 2~~ | ~~Maintenance controls in the UI?~~ **Resolved 2026-09-06: yes** — owner tested Charging allowed / Clear fault / Self-test against the real Nano, all OK. Always visible on the Dock page, double-confirm. | — |
+| ~~Q 3~~ | ~~TopBar ⚡ while charging?~~ **Resolved 2026-09-06: yes.** | — |
 | Q 4 | Robot-status banner: "Charging" / "Docked" as first-class states (they replace "Idle" whenever the robot sits in the dock)? | Yes |
 | Q 5 | Dock pose: any need to **clear** the stored dock pose, or is re-recording always enough? | No clear button |
 | Q 6 | Charge-session statistics (Ah, docked hours, burst count) — wanted, and in Phase D or earlier? | Phase D |
 | Q 7 | Home Assistant dock entities — telemetry-only, none, or also commands? | Telemetry-only, Phase D |
-| Q 8 | Dock Pi service restart buttons in Settings — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
+| Q 8 | Dock Pi service restart buttons (now on the Dock page, §4.1 item 6) — useful or noise? (Agent restart drops relays for seconds.) | Include, with the warning |
 | Q 9 | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
-| Q 10 | Should the dock's `battery_state` raw view (§4.2) exist, or is that only debugging clutter? | Keep, inside `<details>` |
+| Q 10 | Should the dock's `battery_state` raw view (§4.1 item 3) exist, or is that only debugging clutter? | Keep, inside `<details>` |
 | ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |
