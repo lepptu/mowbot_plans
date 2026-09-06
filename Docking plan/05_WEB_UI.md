@@ -46,8 +46,17 @@ each other off the broker session in a loop. Fix: bridge commit `bc9941a`
 makes `client_id` a ROS parameter (default = old value, robot unit
 untouched); the dock unit passes `-p client_id:=mowbot_dock_bridge`
 (`mowbot_dock` `5f9c1f0`). **Any further bridge instance must set a unique
-client id.** Remaining: the §6.1 checklist items not yet exercised. Phase A2
-(charge sessions) next.
+client id.** Second bridge bug, found the same evening: latched ROS topics
+reach the bridge before its MQTT session is up, so on-change topics
+(`ros2/dock/charge_enable`, `ros2/dock/firmware_version` — and on the robot
+`hoverboard/connected`, `estopStatus`, … after every bridge restart) never
+appeared on the broker. Fixed in the bridge (retained-topic cache replayed
+after each MQTT connect; verified on the robot: "replayed 14 retained
+topic(s)"); the dock picks it up on its next `dock-build.sh` + `deploy.sh`
+(submodule pointer bumped). Remaining: dock rebuild, HA device check in
+Home Assistant (no LXC account can read `homeassistant/#`, so it cannot be
+verified from the broker), the §6.1 checklist items not yet exercised.
+Phase A2 (charge sessions) next.
 
 Deviations from the text below: the headline shows the robot's own
 battery voltage whenever the robot bridge is online and the charger is not
