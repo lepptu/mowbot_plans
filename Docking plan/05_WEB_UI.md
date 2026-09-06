@@ -39,10 +39,15 @@ Done and live:
   `dock_agent_node` publishes latched `dock/charge_enable` +
   `dock/firmware_version` (compile-checked on the robot Pi).
 
-Owed (workstation + dock Pi, PI_SETUP §9): `git pull && git submodule
-update --init`, rebuild the builder image, `dock-build.sh`, `deploy.sh`,
-then §9a–9d on the Pi (runtime libs, `secrets.yaml`, sudoers, enable the
-unit). Then the §6.1 checklist. Phase A2 (charge sessions) next.
+**Dock bridge deployed and working 2026-09-06** (owner ran the workstation
+build + PI_SETUP §9). First-start bug, found and fixed by the owner: the
+bridge hard-coded its MQTT client id, so the robot and dock instances kicked
+each other off the broker session in a loop. Fix: bridge commit `bc9941a`
+makes `client_id` a ROS parameter (default = old value, robot unit
+untouched); the dock unit passes `-p client_id:=mowbot_dock_bridge`
+(`mowbot_dock` `5f9c1f0`). **Any further bridge instance must set a unique
+client id.** Remaining: the §6.1 checklist items not yet exercised. Phase A2
+(charge sessions) next.
 
 Deviations from the text below: the headline shows the robot's own
 battery voltage whenever the robot bridge is online and the charger is not
