@@ -75,7 +75,7 @@ power_supply_status, power_supply_health, present}` with `null` for NaN).
 | `ros2/dock/event` | String | no | every message | `EVT:BOOT:<ver>`, `EVT:VER:<ver>` (60 s heartbeat), `EVT:SELFTEST:OK\|FAIL`, `EVT:EMERGENCY:SWITCH`, `EVT:NOCURRENT` |
 | `ros2/dock/pi/system` | bridge `system_stats` | no | 5 s | CPU/temp/RAM/disk/WiFi of the **dock Pi** — the same block the robot publishes on `ros2/pi/system` |
 | `ros2/dock/logs/{cmd,data,services}` | bridge `log_control` | services retained | on demand | journald for dock units |
-| `ros2/dock/launch/{cmd,status}` | bridge `launch_control` | status retained | on change | restart of dock units (Settings → Docking, Phase D) |
+| `ros2/dock/launch/{cmd,status}` | bridge `launch_control` | status retained | on change | restart of dock units (Dock page, Phase D) |
 
 Commands (webui → dock, **never retained**): `ros2/dock/charge_enable_cmd`,
 `ros2/dock/clear_fault_cmd`, `ros2/dock/self_test_cmd` (all `{"data": bool}`).
@@ -541,7 +541,7 @@ against `config.datum`.
 
 ### 5.4 Phase D — polish
 
-Charge-session stats (§4.8), HA discovery file (§4.9), Settings → Docking
+Charge-session stats (§4.8), HA discovery file (§4.9), Dock page restart buttons + Settings → Docking auto-dock toggle
 panel (§4.5), `auto_dock_on_low_battery` toggle once the bridge exposes it.
 
 ## 6. Test checklists
