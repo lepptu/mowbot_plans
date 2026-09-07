@@ -646,6 +646,43 @@ Options (decide before the next session):
    the BNO085 absolute yaw (needs magnetometer calibration away from the
    dock), or dual-antenna GNSS heading.
 
+### 10.10 Decision 2026-09-07 (late) — lidar detection of the dock's V target (external detection pose)
+
+Answer to §10.9: use `use_external_detection_pose`-style detection instead
+of the map heading. The dock already carries a **V-shaped target on top of
+the charger** (owner design): 320 mm wide at the opening, 92 mm deep,
+120° opening (arms at 60° to the axis), at LD06 height. Scan from the seated
+robot (2026-09-07, lidar on): 502 pts/rev, 0.72° step, full 360° (rear NOT
+cropped), intensities present; the V shows as ~100 points at 0.26–0.31 m
+behind the lidar, apex on the axis (y = 0.00), intensity 90 apex / 180 arms.
+Calibration from that scan: **apex → base_link = 0.31 + 0.051 = 0.36 m**
+along the axis. Also seen: a very bright (I ≈ 220) straight surface 0.45 m
+to one side, a wall 1.06 m to the other.
+
+Design (next session, §11.7):
+- New node `dock_v_detector` (mowing_navigation, C++): subscribe `/scan`;
+  prior = the plugin's `docking/dock_pose` (map) transformed into the lidar
+  frame via TF (fallback: dock.json); window ±0.6 m / ±30° around the prior;
+  split points by the prior axis, fit two lines (least squares + outlier
+  rejection), accept if the inter-line angle is 120° ± 15° and each arm is
+  0.12–0.22 m; apex = intersection, axis = bisector pointing out of the V
+  (toward the opening). Publish `detected_dock_pose` (PoseStamped, lidar
+  frame, ~10 Hz) with position = apex and yaw = out-of-V direction, plus a
+  marker for RViz/Foxglove. At 2 m the V is ~13 points (coarse), at 1 m
+  ~26, at 0.5 m ~50 — accuracy improves exactly where it matters.
+- `MowbotChargingDock`: `use_external_detection_pose` param; when a
+  detection younger than `external_detection_timeout` (1 s) exists,
+  `getRefinedPose` returns dock pose = apex + `v_apex_to_base_m` (0.36) ·
+  u_out, yaw = −u_out (the server's "into the dock" convention, §10.8),
+  through the existing low-pass filter; otherwise the dock.json prior (so
+  the approach starts on the prior and hands over to the measurement).
+  isDocked stays the seat microswitch.
+- `fixed_frame` back to **odom** once detection is on (the detection is
+  re-transformed every cycle; odom is the smooth short-term frame — the
+  map heading drift that motivated `map` in §10.9 no longer matters).
+- Retroreflective tape on the V arms is optional; the 0.45 m side surface
+  shows the LD06 rewards it (I ≈ 220 vs 140 for a plain wall).
+
 ### 10.5 Open questions (owner)
 
 | Q | Question | Proposed default |
@@ -736,6 +773,19 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
       deployed, before anything moves.
 - [ ] §8.2 field checklist — first item needs Phase B (11.5); Dock/Undock
       via `mosquitto_pub -t ros2/docking/cmd` until Phase C.
+
+### 11.7 Lidar V detection (§10.10) — NEXT, before more dock attempts
+
+- [ ] `dock_v_detector` node in `mowing_navigation` (scan → V fit →
+      `detected_dock_pose` + marker), params: V width 0.32, depth 0.092,
+      opening 120°, window, min points.
+- [ ] Bench with the seated scan: apex at (−0.31, 0.00) lidar frame, then
+      from 0.5 / 1 / 2 m on the axis and ±20° off-axis (robot pushed by hand).
+- [ ] Plugin: `use_external_detection_pose`, `v_apex_to_base_m` 0.36,
+      `external_detection_timeout` 1.0, filter; prior fallback.
+- [ ] nav2_params: enable detection, `fixed_frame: odom`; launch: start the
+      detector in bringup (lidar must be ON — dock_manager F53 covers it).
+- [ ] Field: dock from staging with the e-stop ready; then §8.2 items.
 
 ### 11.4 Mission node (`mowing_navigation`) — P4 gate, can ride with 11.2
 
