@@ -47,15 +47,14 @@ docking_server:
     dock_prestaging_tolerance: 0.5
     dock_plugins: ["mowbot_dock_plugin"]
     mowbot_dock_plugin:
-      plugin: "opennav_docking::SimpleChargingDock"
-      use_external_detection_pose: false   # blind RTK docking (README D2)
-      use_battery_status: true             # isCharging = battery_state.current > threshold
+      plugin: "mowing_navigation::MowbotChargingDock"   # CUSTOM (D8 promoted 2026-09-07, §10.7): isDocked = seat microswitch
       charging_threshold: 0.2              # A (decided 2026-09-07) — 10× the ±0.02 A noise floor, well under the ≥0.35 A a seated robot always draws through the charger (02 §8); ~2 A in bulk charge
-      use_stall_detection: false
-      docking_threshold: 0.05              # pose-based isDocked tolerance; tune vs RTK jitter
+      docking_threshold: 0.05              # m — pose FALLBACK only (microswitch topic stale)
       staging_x_offset: 2.0                # POSITIVE: staging = seated pose + 2.0 m along the recorded yaw, i.e. in FRONT of the seated robot (verified in 1.3.10, §10.2 item 2). 2.0 m chosen 2026-09-07 "to be safe" for the first tests — tune down toward 0.7 m once the blind reverse proves accurate (see note below)
       staging_yaw_offset: 0.0              # robot at staging faces away from the dock; the server rotates the approach target by π itself for dock_backwards
-      filter_coef: 0.1
+      telemetry_stale_s: 5.0               # microswitch / battery_state older than this = dock Pi unreachable
+      microswitch_topic: "/dock/microswitch"
+      battery_state_topic: "battery_state" # remapped to /dock/battery_state in navigation.launch.py
     controller:
       k_phi: 3.0
       k_delta: 2.0
@@ -106,8 +105,8 @@ interlocks), `docking:` section in `topics.yaml`:
 | `ros2/docking/cmd` | webui → robot | `{action: "dock"\|"undock"\|"cancel", id}` |
 | `ros2/docking/status` | robot → webui, **retained** | `{state, feedback_state, physically_docked, drive_out_guard, reason, error_code, error_msg, started_at, retries, id}` (fields decided 2026-09-07, Q 5) |
 
-`state`: `idle | staging | approaching | waiting_charge | docked |
-undocking | failed | canceled` — mapped from `DockRobot`/`UndockRobot`
+`state`: `idle | powering_lidar | staging | approaching | waiting_charge |
+docked | undocking | undocked | failed | canceled` — mapped from `DockRobot`/`UndockRobot`
 feedback (`NAV_TO_STAGING_POSE`, `CONTROLLING`, `WAIT_FOR_CHARGE`,
 `RETRY`) + results.
 
@@ -115,7 +114,7 @@ Field contract (the web UI is written against this — 05 §2.2/§5.3):
 
 | Field | Type | Meaning |
 |---|---|---|
-| `state` | string | as above; `powering_lidar` also possible while the F53 lidar wait runs |
+| `state` | string | as above (`undocked` = terminal after a successful UndockRobot; `powering_lidar` while the F53 lidar wait runs) |
 | `feedback_state` | string \| null | raw Nav2 feedback name (`NAV_TO_STAGING_POSE`, `INITIAL_PERCEPTION`, `CONTROLLING`, `WAIT_FOR_CHARGE`, `RETRY`) while an action runs |
 | `physically_docked` | bool \| null | `/dock/microswitch`; `null` when the dock topic is stale (> 5 s) |
 | `drive_out_guard` | bool | drive-out guard active (§3, §10.4 item 2) |
@@ -267,11 +266,19 @@ so fake publishers would fight the real topics, and the indoor rig fights the
 live EKF. Instead, run these with the **drive motors master switch OFF**
 (drive commands are ignored, nothing moves), robot anywhere, real dock on:
 
-- [ ] `docking_server` lifecycle-activates in the nav container;
+- [x] `docking_server` lifecycle-activates in the nav container;
       `ros2 param dump /docking_server` reconciled with §2.1 (closes README
-      open question 3).
-- [ ] `/dock/battery_state` seen by the docking server (`ros2 topic info -v`
-      shows the subscription; QoS compatible).
+      open question 3). **Done 2026-09-07** — activated + bonded after the
+      bringup restart; all §2.1 values read back (`ros2 param get`, the
+      `dump` command returns `{}` for composed nodes over zenoh). Extra
+      1.3.10 names seen: `controller.simulation_time_step` (yaml key fixed),
+      `navigator_bt_xml`, `controller.v_angular_max/slowdown_radius/beta/lambda`.
+- [x] `/dock/battery_state` seen by the docking server (`ros2 topic info -v`
+      shows the subscription; QoS compatible). **Done 2026-09-07** — publisher
+      `dock_agent`, subscribers `docking_server` + `mqtt_bridge_node`, all
+      RELIABLE/VOLATILE; `/dock_robot` + `/undock_robot` actions present;
+      `docking_server` publishes `/cmd_vel_raw` (TwistStamped) next to the
+      controller/behavior servers.
 - [ ] Refusals, each with the right `reason` in `ros2/docking/status`:
       e-stop pressed, mission running, mission node stopped
       (`mission_state_unknown`), `dock.json` missing / malformed,
@@ -284,10 +291,12 @@ live EKF. Instead, run these with the **drive motors master switch OFF**
       guard — a pad command ⇒ `charge_enable` goes false (dock card shows
       "charging DISABLED"), `drive_out_guard: true`; release ⇒ re-enabled
       after 10 s / switch release.
-- [ ] Sequenced undock, motors OFF, robot seated and charging: `undock` ⇒
-      enable-off → dock state IDLE, 0 A → `UndockRobot` sent (robot cannot
-      move, times out) → enable restored. Ordering visible in the dock
-      card and the bridge log.
+- [x] **Done live 2026-09-07 20:13 (real motion, not motors-OFF):** `undock`
+      from CHARGING (1.56 A) ⇒ permission off → dock cold (state 0, 0.01 A)
+      in < 1 s → `UndockRobot` accepted → seat switch released at +1 s →
+      "reached staging pose" at +18 s → `undocked`, permission restored,
+      dock IDLE. Status walked `undocking/COOLING → undocking/UNDOCKING →
+      undocked` with `physically_docked` flipping true→false.
 - [ ] Discipline: `setsid nohup … < /dev/null` for any ad-hoc publisher,
       never pattern-kill nav2 names while production units run, expect a
       phantom stats mission if the bridge is up.
@@ -296,11 +305,13 @@ Everything that moves the robot is in §8.2 with the real dock.
 
 ### 8.2 Field (P3 exit criteria)
 
-- [ ] Manual park (Drive pad until the microswitch clicks and charging
+- [x] (2026-09-07, one-off by hand: robot was already seated; pose read from
+      `/odometry/global`, RTK h_acc 14 mm, written to `dock.json` — Phase B
+      overwrites it via the real button later) Manual park (Drive pad until the microswitch clicks and charging
       starts) + **"Save dock at robot position"** (web UI Phase B) —
       `dock.json` appears on the robot, marker + 2.0 m staging marker on the
       map, backend warning shown if the dock reports "not seated".
-- [ ] Undock, then first autonomous dock from ~3 m with the robot already
+- [ ] (undock part done 2026-09-07 — first real undock clean) Undock, then first autonomous dock from ~3 m with the robot already
       roughly on the dock axis; then from 3 m off-axis; 10/10 attempts with
       charge current confirmed before moving on.
 - [ ] Dock from different yard corners (staging navigation across
@@ -371,6 +382,9 @@ when §2–§7 are built. Items marked **(Q n)** need an owner decision.
    `staging = dock_pose + staging_x_offset·(cos yaw, sin yaw)`, yaw +
    `staging_yaw_offset`. With the recorded yaw = seated robot heading
    (pointing away from the dock, D10) use **`staging_x_offset: 2.0` (positive; 0.7 was the earlier draft)
+   — BUT the approach target orientation must be flipped by π for the
+   backward controller, done in the custom plugin's `getRefinedPose()`
+   (§10.8, found live 2026-09-07)
    (positive) and `staging_yaw_offset: 0.0`**. The server itself rotates the
    approach target by π in `approachDock` when `dock_backwards` is true, and
    `resetApproach`/`undockRobot` drive with `!dock_backwards` (forward). No
@@ -405,6 +419,10 @@ when §2–§7 are built. Items marked **(Q n)** need an owner decision.
    failure — the case is a stale `/dock/battery_state` (WiFi) whose last
    value was "charging". The sequenced enable-off before `UndockRobot`
    normally makes current 0 well before pull-out.
+   **Superseded 2026-09-07 by §10.7:** the undock *pre-check* is
+   `isDocked() || isCharging()`; with the stock plugin both are false after a
+   restart/manual park + sequenced enable-off ⇒ "Robot is not in the dock, no
+   need to undock". Fixed by the custom plugin (isDocked = microswitch).
 8. **`cmd_vel` plumbing missing from §2.2.** The docking server publishes
    `cmd_vel`; in `navigation.launch.py` the controller and behavior servers
    remap `cmd_vel → cmd_vel_raw` → velocity_smoother → `cmd_vel_nav` →
@@ -527,6 +545,107 @@ when §2–§7 are built. Items marked **(Q n)** need an owner decision.
    automatically", and row 10 lacks the "Enable off→on to top up" hint that
    05 §3 now specifies. One-line fixes; bundle with Phase C.
 
+### 10.6 (reserved)
+
+### 10.7 Implementation finding 2026-09-07 — stock plugin cannot undock after a restart (D8 promoted)
+
+First live run of `dock_manager` (robot parked in the real dock, COMPLETE):
+`undock` ran the sequence exactly as designed — permission off → dock cold
+(state 5, 0 A) → `UndockRobot` accepted — and Nav2 aborted it in 90 ms:
+*"Robot is not in the dock, no need to undock"*. Cause (1.3.10
+`undockRobot()` pre-check `isDocked() || isCharging()`): the stock
+`SimpleChargingDock` decides "docked" by distance to a dock pose it only
+remembers from a docking action **in the same server run**, so after a
+bringup restart or a manual park (the §8.2 commissioning flow) it is false;
+and the sequenced undock switches charging off first (K1 must open at 0 A,
+02 §4), so `isCharging()` is false too. The two halves of the plan were
+mutually exclusive with the stock plugin.
+
+**Fix (README D8, now the design, not the fallback):**
+`mowing_navigation::MowbotChargingDock` (`mowing_navigation` package,
+`src/mowbot_charging_dock.cpp`, exported via `mowbot_dock_plugins.xml`):
+`isDocked()` = `/dock/microswitch` when fresh (pose-based fallback within
+`docking_threshold` when the dock Pi is unreachable), `isCharging()` =
+`battery_state.current > charging_threshold`, `getStagingPose()` identical
+to the stock math, `disableCharging()` = no-op (the bridge sequences it).
+Loaded and active 2026-09-07 20:01. Benefits beyond the fix: the docking
+approach stops on physical contact rather than on a pose estimate, and
+undock works in every case the seat switch is visible.
+
+Side note from the same run: the undock's off→on permission pulse on a
+COMPLETE dock is the firmware's re-charge trigger (02 §4) — the dock started
+a fresh CHARGING cycle (1.0 A) afterwards. Expected, harmless, worth knowing
+when reading dock logs after an undock attempt.
+
+### 10.8 Field finding 2026-09-07 — backward approach looped 45° (orientation convention), fixed in the plugin
+
+Two live dock attempts (one from the staging point, one after a 4 m
+converging straight run to rule out heading drift) both swung ~45° off the
+axis within seconds of starting the reverse and were e-stopped. The undock
+(same controller, forward) had tracked straight to 15 cm. Reading 1.3.10:
+`approachDock()` rotates the target orientation by π for `dock_backwards`,
+and `EgocentricPolarCoordinates` rotates the line of sight by π for
+`backward` as well. The server therefore expects the dock yaw to point
+**into** the dock. With our D4 convention (yaw = seated robot heading,
+pointing away) the control law sees `phi = π` — "arrive facing the opposite
+way" — and plans a wide loop. Deterministic, independent of localization
+(§10.2 item 2 got the staging position right and this orientation part
+wrong; the original "staging_yaw_offset: π?" suspicion was half-right).
+
+**Fix:** `MowbotChargingDock::getRefinedPose()` returns the dock pose with
+yaw + π. Only the approach target is produced there; `getStagingPose()`
+(dock command) and the undock (robot pose) keep the un-flipped heading with
+`staging_x_offset: +2.0` / `staging_yaw_offset: 0`, both verified live.
+dock.json convention unchanged (seated robot pose, yaw away from the dock).
+
+Also learned: the map-frame heading is unobserved at rest (no absolute yaw
+source in either EKF, 01/nav2 config) and re-converges only while driving;
+the recorded yaw was within 3° of the RTK exit track, the post-drive
+estimate 12° off. Mitigations kept for later (not the cause of the loops):
+record yaw from the RTK entry/exit track instead of the heading estimate;
+`fixed_frame: map` so the target keeps correcting during the reverse; dock
+from ≥ 4 m out so the staging leg converges heading; dual-antenna GNSS
+heading long-term.
+
+### 10.9 Field finding 2026-09-07 (runs 3–4) — heading estimate after the turn at staging is the blocker
+
+After the §10.8 fix the reverse was straight (run 3) and the docking control
+itself behaved: the robot converged on the *estimated* dock pose to 6 cm /
+5° (run 4). Physically it ended ~0.4–0.6 m beside the dock both times.
+Measured at the moment the reverse started (1 s into `CONTROLLING`, right
+after Nav2's 180° turn-in-place at staging): heading estimate error **+19.5°
+(run 3), +25.2° (run 4)** vs the RTK-measured dock axis; 13 s of reversing
+later the heading estimate had converged to < 1° / 5°, but the position
+estimate had inherited the error (dead-reckoning with a wrong heading, GPS
+x/y pulling it back slowly — map EKF x/y process noise 1.0).
+
+Conclusions:
+- The docking code (server config, plugin, `dock_manager`) is not the
+  limiting factor any more; the map-frame **heading estimate right after a
+  turn-in-place is off by ~20–25°** and only converges while driving
+  straight. Neither EKF has an absolute yaw source (04 config review: wheel
+  vx/vy/vyaw + gyro vyaw + GPS x/y only); the BNO085 reports gyro
+  calibration 0 ("unreliable"); F58b "calibration dance" and F62 spin gate
+  are the mowing side of the same problem.
+- `fixed_frame: map` (applied run 4) is correct and kept, but not
+  sufficient: re-aiming cannot help while the position estimate is wrong.
+- `dock.json` yaw was taken from the RTK exit track (−42.5°) — good.
+
+Options (decide before the next session):
+1. **Heading-independent reverse** (recommended): `dock_manager` runs the
+   final approach itself — NavigateToPose to staging (Nav2 spins, error
+   irrelevant afterwards), then reverse at 0.1 m/s steering on RTK only:
+   lateral error to the recorded axis line from `/odometry/gps` (2 cm) and
+   course from successive RTK positions; stop on the seat microswitch, then
+   wait for charge current. Nav2 keeps undock and staging. ~200 lines,
+   replaces the DockRobot approach (D2 "blind RTK" done literally).
+2. Longer approach for convergence: `staging_x_offset` 4.0 + slower; cheap
+   one-parameter try, uncertain (position lag), robot sweeps near the dock.
+3. Fix heading estimation (separate project): gyro reliability/bias,
+   wheel-separation calibration (a 12 % error = 22° per 180° turn), fuse
+   the BNO085 absolute yaw (needs magnetometer calibration away from the
+   dock), or dual-antenna GNSS heading.
+
 ### 10.5 Open questions (owner)
 
 | Q | Question | Proposed default |
@@ -546,7 +665,7 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
 
 ### 11.1 Nav2 (`ros2-driver-converted/bringup`)
 
-- [ ] `config/nav2_params.yaml`: **rewrite** the existing stale
+- [x] (2026-09-07) `config/nav2_params.yaml`: **rewrite** the existing stale
       `docking_server:` block to §2.1 — `dock_backwards: true`,
       `fixed_frame: odom`, `wait_charge_timeout: 15`,
       `dock_approach_timeout: 60`, `max_retries: 3`, keep
@@ -556,58 +675,60 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
       `use_stall_detection: false`, `docking_threshold: 0.05`,
       `staging_x_offset: 2.0`, `staging_yaw_offset: 0.0`; controller
       `use_collision_detection: false`, `v_linear_min 0.10`, `v_linear_max 0.15`.
-- [ ] `launch/navigation.launch.py`: add `opennav_docking::DockingServer`
+- [x] (2026-09-07) `launch/navigation.launch.py`: add `opennav_docking::DockingServer`
       composable (name `docking_server`, remaps `('cmd_vel','cmd_vel_raw')`
       + `('battery_state','/dock/battery_state')`) and `docking_server` to
       `lifecycle_nodes`.
-- [ ] Bench: lifecycle-activates; `ros2 param dump /docking_server`
-      reconciled with §2.1 (closes README open question 3).
-- [ ] Deploy (user): `mowbot-launch-bringup` restart.
+- [x] (2026-09-07) Lifecycle-activates; parameters reconciled with §2.1
+      (closes README open question 3) — §8.1.
+- [x] (2026-09-07) `mowbot-launch-bringup` restarted; `docking_server` active.
+- [x] (2026-09-07) **Custom plugin `MowbotChargingDock`** in `mowing_navigation`
+      (§10.7): built, `nav2_params.yaml` switched to it, bringup restarted,
+      plugin created + active, subscribed to `/dock/microswitch` + `/dock/battery_state`.
 
 ### 11.2 Bridge `dock_manager` (`mowbot_mqtt_bridge`)
 
-- [ ] `include/…/dock_manager.hpp`, `src/dock_manager.cpp` (clone of
+- [x] (2026-09-07) `include/…/dock_manager.hpp`, `src/dock_manager.cpp` (clone of
       `goto_manager` shape), `DockingConfig` in `bridge_config.{hpp,cpp}`,
       `docking:` section parsed from `topics.yaml`, wiring in
       `mqtt_bridge_node.cpp` (cmd handler, retained status republish on
       reconnect), `CMakeLists.txt`.
-- [ ] Commands `dock | undock | cancel` with `id` echo; `dock` reads
+- [x] (2026-09-07) Commands `dock | undock | cancel` with `id` echo; `dock` reads
       `~/pi_ws/mowing_data/config/dock.json` per command (refuse
       `no_dock_pose` / `bad_dock_pose`); sends `DockRobot`
       (`use_dock_id:false`, `dock_type: mowbot_dock_plugin`,
       `navigate_to_staging_pose:true`); `undock` always sends `dock_type`.
-- [ ] Interlocks: e-stop (refuse + cancel), mission idle / fresh
+- [x] (2026-09-07, + `already_docked` refusal) Interlocks: e-stop (refuse + cancel), mission idle / fresh
       (`mission_state_unknown`), `busy`, `nav2_unavailable`, **dock-online
       (`dock_offline`, `/dock/battery_state` stale > `dock_stale_s` 5 s,
       `dock` only)**, `not_docked` for undock; 3 s send + 5 s cancel
       watchdogs; link loss does **not** cancel (documented in config).
-- [ ] F53 lidar power step (`powering_lidar` state) copied from
+- [x] (2026-09-07) F53 lidar power step (`powering_lidar` state) copied from
       `goto_manager`.
-- [ ] Sequenced undock: `charge_enable_cmd false` → wait dock state IDLE
+- [x] (2026-09-07; live-verified up to UndockRobot accepted) Sequenced undock: `charge_enable_cmd false` → wait dock state IDLE
       & current < 0.1 A (3 s timeout, warn) → `UndockRobot` → on result
       `charge_enable_cmd true`. Undock `FAILED_TO_CONTROL` with
       `physically_docked == false` ⇒ `idle`, reason
       `undock_charge_status_stale` (warning).
-- [ ] **Drive-out guard** (§10.4 item 2): `/hoverboard_base_controller/cmd_vel`
+- [x] (2026-09-07, code; not yet exercised) **Drive-out guard** (§10.4 item 2): `/hoverboard_base_controller/cmd_vel`
       non-zero while seated and no own action in flight ⇒
       `charge_enable_cmd false` once; re-enable on switch release or 10 s
       idle; never overrides a manual enable-off; `drive_out_guard` in status.
-- [ ] Retained `ros2/docking/status` exactly per the §3 field table
+- [x] (2026-09-07; `undocked` terminal state added) Retained `ros2/docking/status` exactly per the §3 field table
       (`state`, `feedback_state`, `physically_docked`, `drive_out_guard`,
       `reason`, `error_code`, `error_msg`, `started_at`, `retries`, `id`);
       Nav2 feedback → `staging | approaching | waiting_charge`, results →
       `docked | failed | canceled` with mapped `reason`.
 - [ ] `EVT:NOCURRENT` cross-check warning (§4.4) — optional for the first cut.
-- [ ] P4 params (declared now, default off, allowlisted in `param_control`):
+- [x] (2026-09-07 — declared, default off; **NOT allowlisted**: the dock bridge shares the node name `mqtt_bridge_node`, so `/mqtt_bridge_node/set_parameters` is ambiguous on zenoh — give the dock instance a distinct node name first) P4 params (declared now, default off, allowlisted in `param_control`):
       `auto_dock_on_low_battery`, `auto_dock_on_mission_complete`,
       `auto_dock_delay_s` (5). Triggers: mission_state `paused`/`battery`
       → `stop` on `/mowing/mission_cmd` → wait `idle` (30 s) → `dock`;
       mission_state edge → `idle`/`complete` → delay → `dock`.
-- [ ] `config/topics.yaml`: `docking:` section (cmd/status topics,
+- [x] (2026-09-07; params not in `param_control` yet, see above) `config/topics.yaml`: `docking:` section (cmd/status topics,
       `dock_json_path`, `dock_stale_s`, link-loss comment) + the three
       params in `param_control`.
-- [ ] Build/deploy (user): one `colcon build` for `mowbot_mqtt_bridge`,
-      restart `mowbot-mqtt-bridge.service`.
+- [x] (2026-09-07) Built + `mowbot-mqtt-bridge.service` restarted; startup line OK, refusals `already_docked` / `bad_action`, cancel→idle verified over MQTT.
 
 ### 11.3 Tests
 
