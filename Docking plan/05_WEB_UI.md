@@ -17,8 +17,9 @@
 > in (tested OK against the real Nano); top-bar ⚡ while charging is in;
 > robot-status banner shows Charging / Docked; charge statistics on the
 > Dock page; HA gets telemetry **and** commands; dock Pi restart, reboot and
-> shutdown from the Dock page; backward docking. **Q 9 (COMPLETE state) is
-> the only open item and does not block implementation.**
+> shutdown from the Dock page; backward docking. **Q 9 (COMPLETE state)
+> resolved 2026-09-07: firmware** — fw 0.2.0 reaches state 5 (§0 fact 1,
+> §9); no open items.
 
 ## Phase A status (2026-09-06)
 
@@ -81,12 +82,16 @@ in the dock bridge config (Phase A, as planned).
 
 Two hard facts from the dock side that shape the UI (HANDOFF §3):
 
-1. **State 5 COMPLETE never occurs** with fw 0.1.4. A charge ends
-   `CHARGING → DRAIN → IDLE` while the robot stays seated, then the pack is
-   topped up in bursts (observed 40 s–3 min CHARGING, ~8 min IDLE gaps).
-   "Seated + IDLE" therefore means *resting between top-ups*, not "empty
-   dock". Nothing in the UI may depend on state 5 or on
-   `power_supply_status == FULL` until TODO.md §6 is decided.
+1. **State 5 COMPLETE is real since fw 0.2.0 (2026-09-07).** A charge ends
+   `CHARGING → DRAIN → COMPLETE` once the charger current has stayed below
+   0.70 A with the charger voltage in the CV region for 60 s; the dock then
+   goes fully cold and `battery_state.power_supply_status == FULL`. The dock
+   does **not** restart on its own: the parked robot drains its pack at
+   ~0.33 A until "Charging allowed" is pulsed off→on (manual top-up; a
+   robot-side policy per 04 §6 is still to build). "Seated + IDLE" is now
+   either "charging disabled" (`charge_enable` false) or a < 1 s transient
+   before SEATED. (The 0.1.4-era "top-up cycling" was enable-off commands
+   hitting the dock, not firmware — see the dock repo's TODO §6.)
 2. `charger_voltage` reads ≈ 0 whenever the dock is cold; `battery_state`
    voltage/percentage are `null` (NaN) below 20 V. "0 V" is the normal idle
    value, never "battery empty".
@@ -187,9 +192,9 @@ action status (Phase C, may be absent). First match wins:
 | 7 | docking action `undocking` | **Undocking…** | ok | — |
 | 8 | `state` ∈ {2, 3} | **Charging** | ok | `2.1 A · 41.2 V · ~85 %` (see §3.1 for the %) |
 | 9 | `state` == 4 | **Finishing charge** | ok | "draining, relay opens at 0 A" |
-| 10 | `state` == 5 | **Charged** | ok | kept for the day COMPLETE exists |
+| 10 | `state` == 5 | **Charged** | ok | "battery full, charger cold"; `charge_enable` true → "Enable off→on to top up"; fw ≥ 0.2.0 reaches this within ~60 s of the current dropping below 0.70 A |
 | 11 | `state` == 1 | **Seated** | warn | "waiting for charger…"; after 15 s seated with no charging: "charge did not start — check Charging allowed / fault" |
-| 12 | `state` == 0 && `microswitch` | **Docked · resting** | ok | "battery topped up, charger cold; next top-up starts automatically" + `charge_enable` false → "charging DISABLED" (warn) |
+| 12 | `state` == 0 && `microswitch` | **Docked · resting** | ok | "seated, charger cold"; `charge_enable` false → "charging DISABLED" (warn). With fw ≥ 0.2.0 and enable true this is transient (< 1 s before SEATED) or the fault-3 retry hold-off — the full-pack rest state is row 10 |
 | 13 | `state` == 0 && !`microswitch` | **Empty** | idle | "dock cold, ready" |
 | 14 | anything else / no data | **—** | idle | — |
 
@@ -207,7 +212,7 @@ action status (Phase C, may be absent). First match wins:
 The browser keeps a small in-memory record per page session: time of last
 `state == 3`, and a running sum of `current × Δt` while charging (2 Hz
 samples). Used for the "last charged N min ago · ~0.4 Ah this session" line
-on the Docked-resting row. It resets on reload and is honest about it
+on the Charged / Docked-resting rows. It resets on reload and is honest about it
 (shown only after at least one charging sample was seen). Persistent,
 authoritative session stats come from the backend in Phase A2 (§4.8).
 
@@ -249,9 +254,9 @@ bridge is offline:
 - **Charging allowed** on/off → `charge_enable_cmd`. Off while charging
   runs the sequenced shutdown (AC off → drain → K1 open) — say so in the
   confirm text. State shown from `ros2/dock/charge_enable` (§2.1 gap).
-  Turning it **off→on while docked-resting** is also the manual "top up
-  now" action (02 §4 re-entry rule); label the on-button "Enable (starts a
-  charge if seated)".
+  Turning it **off→on while Charged (state 5)** is the manual "top up now"
+  action (02 §4 re-entry rule — the dock never restarts by itself); label
+  the on-button "Enable (starts a charge if seated)".
 - **Clear fault** → `clear_fault_cmd`; enabled only for fault 1/2; hint
   "accepted by the firmware only at 0 A".
 - **Self-test** → `self_test_cmd`; enabled only in state 0/5; result badge
@@ -705,8 +710,10 @@ bridge exposes that param.
       thrash (HANDOFF §5 history).
 - [ ] Seat the robot manually: card walks Seated → Charging within ~1 s;
       current/voltage update at 2 Hz; robot-status banner says Charging.
-- [ ] Wait out a full charge: DRAIN → Docked · resting; "last charged … ago"
-      appears; a top-up burst later flips it back to Charging.
+- [ ] Wait out a full charge: DRAIN → **Charged** (state 5; fw ≥ 0.2.0,
+      ~60 s after the current drops below 0.70 A on a full pack); "last
+      charged … ago" appears; Charging allowed off→on starts a top-up and it
+      returns to Charged.
 - [ ] Charging allowed → off mid-charge: sequenced shutdown visible (K2 off,
       DRAIN, K1 off, Empty/resting), alert "charging is disabled" while
       seated; → on: charge restarts.
@@ -790,6 +797,6 @@ bridge exposes that param.
 | ~~Q 6~~ | ~~Charge-session statistics?~~ **Resolved 2026-09-06: wanted, on the Dock page.** Built as Phase A2 (backend `dock_stats.py` + Dock page card, §4.8) since it needs only Phase A telemetry. | — |
 | ~~Q 7~~ | ~~HA entities?~~ **Resolved 2026-09-06: telemetry and commands** (§4.9): charging-allowed switch, clear-fault and self-test buttons now; Dock/Undock buttons with Phase C. No dock Pi power in HA. | — |
 | ~~Q 8~~ | ~~Dock Pi restart buttons?~~ **Resolved 2026-09-06: yes, plus reboot and shutdown** of the dock Pi from the Dock page, same mechanism and UI as the robot Pi (§4.1 item 6). | — |
-| **Q 9 — OPEN** | The COMPLETE decision (dock TODO §6): fix it in **firmware** (true state 5) or **remap in the agent** (IDLE+seated → FULL)? The UI copes either way, but "Charged" vs "Docked · resting" wording depends on it. Owner 2026-09-06: leaning firmware, still thinking — **do not block on it**; implement the UI against fw 0.1.4 behaviour (§0 fact 1, §3 rows 10/12) and revisit the wording when decided. | UI handles both; recommend the firmware route so the docking server gets honest `FULL` |
+| ~~Q 9~~ | ~~The COMPLETE decision: firmware or agent remap?~~ **Resolved 2026-09-07: firmware.** fw 0.2.0 makes state 5 reachable (completion = current < 0.70 A ∧ V#1 ≥ 41 V for 60 s — the docked robot's own ~0.4 A draw through the charger made the plan's 0.15 A unreachable); first real COMPLETE 17:40:17, `FULL` now reported. The 08-23 "DRAIN→IDLE" observations were enable-off commands, not firmware. Row 10 "Charged" applies; row 12 re-worded; §0 fact 1 replaced. | — |
 | ~~Q 10~~ | ~~Raw `battery_state` view?~~ **Resolved 2026-09-06: keep it**, collapsed in a `<details>` on the charger detail card (§4.1 item 3) — it shows exactly what the docking server is fed when a docking attempt fails to detect charging. | — |
 | ~~Q 11~~ | ~~Forward or backward docking?~~ **Resolved 2026-09-06: backwards** — the robot's charging contacts are on the rear. README D10, 01 §4.1, 03 §6.4 and 04 §1/§2.1 updated to match. | — |

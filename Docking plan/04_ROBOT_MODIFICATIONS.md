@@ -164,7 +164,11 @@ CV taper on a full pack can sit below `charging_threshold` →
    "we are charging/maintaining" semantics, not a lie. Cleanest
    zero-plugin fix — and now load-bearing: since the 02 rework the dock
    goes fully cold at COMPLETE (no trickle), so a full pack shows a
-   genuine 0 A within a minute or two of seating.
+   genuine 0 A within a minute or two of seating. (Dock fw 0.2.0,
+   2026-09-07: even a full pack draws ≥ 0.35 A for the first 60 s after
+   seating — the robot's own consumption through the charger — before
+   COMPLETE, so `wait_charge_timeout: 15` sees real current; after that the
+   dock is cold until `charge_enable_cmd` is pulsed, 02 §4/§8.)
 3. Custom plugin (`isCharging()` = dock state ∈ {3,5} — the renumbered
    CHARGING/COMPLETE, 02 §3) — the "right" long-term shape if 2 feels
    hacky.

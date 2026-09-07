@@ -1,6 +1,8 @@
 # 02 — Dock Arduino Nano Firmware
 
-> Status: **REVISED 2026-07-31** (originally planned 2026-07-10) — brought in line
+> Status: **REVISED 2026-07-31** (originally planned 2026-07-10), **field-revised
+> 2026-09-07 for firmware v0.2.0** (completion rule, weld-detector grace, rail
+> compensation — §4/§8) — brought in line
 > with the revised [01_HARDWARE.md](01_HARDWARE.md): **two-relay AC-side switching**
 > (K1 42 V DC + K2 mains pilot, strict AC-last-on / AC-first-off sequencing),
 > **voltage divider #2 deleted**, **pre-mow self-test**, **DTR reboot promoted to a
@@ -113,7 +115,9 @@ numeric fields" parser convention carries over unchanged.
 | `faultCode` | 0 none, 1 overcurrent (latching), 2 AC-relay weld / charger live when commanded off (latching), 3 no 42 V after AC-on — charger or AC path dead (non-latching, auto-retry), 4 watchdog silence (report-only) |
 | `uptimeS` | seconds since boot (a reset to 0 tells the Pi a DTR reboot happened) |
 
-Firmware may also emit `WARNING:...` free-text lines (robot convention).
+Firmware may also emit `WARNING:...` free-text lines (robot convention) and,
+since v0.2.0, `EVT:VCC:<volts>` once at boot — the Nano's 5 V rail, which the
+divider #1 reading is scaled by (§8).
 
 ## 4. Charge control state machine & interlocks (the safety core)
 
@@ -145,7 +149,7 @@ RAMP ──V#1 ≥ 40 V or current ≥ RAMP_A_OK within RAMP_TIMEOUT_S──► 
 RAMP ──timeout──► AC off, K1 open → IDLE, report fault 3
                   (non-latching: retry after RETRY_HOLDOFF_S while seated+enable —
                    survives a mains outage with no Pi involved)
-CHARGING ──current < 0.15 A for 60 s (CV taper)──► AC off → DRAIN
+CHARGING ──current < COMPLETE_A (0.70 A) AND V#1 ≥ COMPLETE_V_MIN (41 V) for 60 s (CV taper)──► AC off → DRAIN
 CHARGING ──enable 1→0 (sequenced undock, 04 §6)──► AC off → DRAIN
 DRAIN ──current < 0.10 A (typ. well under 1 s: output caps drain into pack)──►
         open K1 (at 0 A) → COMPLETE (if from taper) / IDLE (if from enable-off)
@@ -183,7 +187,27 @@ Additional rules:
   gone). With the robot seated and enable still 1, an automatic re-sequence
   would oscillate on battery surface-charge sag; instead re-entry requires
   an explicit `enable` 0→1 edge from the dock agent (which decides using
-  robot battery telemetry — ripple to 03/04).
+  robot battery telemetry — ripple to 03/04). Optional firmware fallback
+  since v0.2.0: `TOPUP_INTERVAL_S` (shipped 0 = off) re-sequences COMPLETE →
+  IDLE → SEATED every N seconds while seated+enabled, Pi-independent (D7).
+- **Completion criterion is current AND voltage** (v0.2.0, field finding
+  2026-09-07): the docked robot stays powered from its pack and that load
+  (~0.35–0.40 A) flows through the charger, so the pack's true tail is never
+  visible dock-side and the original 0.15 A taper level was unreachable — no
+  real charge reached COMPLETE before v0.2.0. `COMPLETE_A` 0.70 A = parked
+  floor + 0.3 A margin (≤ ~0.3 A into the pack at declaration); the guard
+  `COMPLETE_V_MIN` 41 V keeps a BMS-limited cold pack or a weak charger (low
+  current at low voltage) in CHARGING. Consequence: `EVT:NOCURRENT`
+  (< 0.10 A) now genuinely means "no charge path" while the robot is on.
+- **Weld detector (b) has a grace period and persistence** (v0.2.0): blind
+  for `WELD_RISE_GRACE_MS` (1.5 s) after AC-off, and the rise must persist
+  `WELD_RISE_HOLD_MS` (200 ms). Reason: after an unsequenced emergency break
+  the charger keeps running on hold-up energy and, unloaded, climbs from the
+  pack-clamped voltage to its 42.7 V set-point — five false fault-2 latches on
+  the real dock (08-23 ×3, 09-06 ×2), each within 100 ms of
+  `EVT:EMERGENCY:SWITCH`; relay switching also puts single-sample spikes on
+  A0. A welded contact holds the voltage indefinitely, so detection is only
+  delayed by ~1.7 s.
 - **"K1 failed to close" is not fully detectable on the dock alone**: it
   looks like RAMP-OK followed by ~0 A, which is also what a full battery
   looks like (taper below threshold — README open question 5). So it is an
@@ -202,13 +226,16 @@ Additional rules:
   **solid** = live sequence (SEATED/RAMP/CHARGING/DRAIN/SELFTEST),
   **blinking** = FAULT.
 - All thresholds are `constexpr` in `charge_control.hpp`, documented in one
-  block, easy to tune during bench tests: `COMPLETE_A` 0.15, `COMPLETE_S`
-  60, `OVERCURRENT_A` 4.0, `OVERCURRENT_MS` 50, `RAMP_V_OK` 40.0,
+  block, easy to tune during bench tests (values as of v0.2.0): `COMPLETE_A`
+  0.70 (was 0.15 until 2026-09-07, see above), `COMPLETE_V_MIN` 41.0,
+  `COMPLETE_S` 60, `OVERCURRENT_A` 4.0, `OVERCURRENT_MS` 50, `RAMP_V_OK` 40.0,
   `RAMP_A_OK` 0.30, `RAMP_TIMEOUT_S` 5 (**measured** AC-on→42 V ramp is
   < 0.2 s on the real charger, 2026-08-03 — 5 s is generous, keep),
   `K1_SETTLE_MS` 100, `DRAIN_A` 0.10, `DRAIN_TIMEOUT_S` 2,
-  `WELD_V` 35.0, `WELD_WINDOW_S` 300, `RETRY_HOLDOFF_S` 60, `NOCURRENT_S` 5,
-  `RECLOSE_HOLDOFF_S` 1, `SELFTEST_S` 2, `WD_TIMEOUT_MS` 2000.
+  `WELD_V` 35.0, `WELD_WINDOW_S` 300, `WELD_RISE_GRACE_MS` 1500,
+  `WELD_RISE_HOLD_MS` 200, `RETRY_HOLDOFF_S` 60, `NOCURRENT_S` 5,
+  `RECLOSE_HOLDOFF_S` 1, `SELFTEST_S` 2, `WD_TIMEOUT_MS` 2000,
+  `TOPUP_INTERVAL_S` 0 (off).
   (Runtime-tunable via protocol = later, only if field tests demand it.)
 
 ## 5. What is deliberately NOT in the firmware
@@ -290,3 +317,41 @@ charger and the real robot pack** — detailed scorecard in
   §3.2) recommended for the production build; relevant to the dock Pi link.
 - **DTR abort/resume, USB-loss mid-charge, and watchdog-silence behaviors**
   all verified live, mid-charge, several times each — all per design.
+
+## 8. P2 field findings (2026-09-07, firmware v0.2.0 on the live dock)
+
+Read from the dock Pi's agent journal and live ROS topics with the robot
+seated on a full pack; details and timestamps in `mowbot_dock_arduino/TODO.md`
+M5 "Field findings 2026-09-07".
+
+- **The docked robot's own draw flows through the charger.** With the pack at
+  42.0 V the dock still measured 0.39–0.42 A (robot telemetry: 0.33 A drain
+  with the charger off). The §4 taper level of 0.15 A was therefore never
+  reachable and no real charge had ever reached COMPLETE (a 3 h 24 min
+  uninterrupted session on 2026-09-06 never tapered). Fixed by the current
+  AND voltage completion rule above; first real COMPLETE 2026-09-07 17:40:17,
+  reproduced twice more (always at exactly `COMPLETE_S` after CHARGING on a
+  full pack), self-test from COMPLETE and enable 0→1 re-entry verified live.
+- **The earlier "COMPLETE never occurs, DRAIN→IDLE while seated" report
+  (2026-08-23) was the enable-off path**, not firmware: the unfiltered agent
+  journal shows `charge_enable -> false` ~100 ms before every such
+  transition and `-> true` before every restart. The analysis had grepped
+  for `state:|fault|EVT:`, which hides those lines. Lesson for the record:
+  the agent logs every command at INFO — read the journal unfiltered.
+- **Divider #1 is not ratiometric; the ACS712 is.** On the dock's own 5 V
+  PSU (rail ≈ 5.15 V) a DMM-true 42.74 V at the connectors read 41.5 V
+  (−2.9 %) although the 08-03 bench calibration on a 5.00 V supply was good
+  to 0.2 %. v0.2.0 measures the rail through the ATmega's internal 1.1 V
+  bandgap (`BANDGAP_MV` 1090, calibrated in situ) and scales the divider
+  result by it: 42.80 V reported vs 42.74 V DMM afterwards; `EVT:VCC` at
+  boot. The current path cancels the rail exactly (zero at VCC/2 and
+  sensitivity ∝ VCC against an AVcc reference) and stays uncorrected;
+  cross-check: dock 0.35–0.40 A while charging vs the robot's own 0.33 A
+  draw. The charger side sits at 42.7 V in CV while the pack reads 42.0 V —
+  the robot's ideal-diode module drops ~0.7 V at 0.4 A.
+- **Fault 2 false latches after emergency switch releases** (five on real
+  hardware, never a real weld) — fixed by the detector-(b) grace/persistence
+  rule above. Faults 1 and 3 have still never fired on real hardware.
+- **Flashing from the dock Pi works** (avrdude 7.1, `-c arduino -b 57600`,
+  agent stopped for ~15 s; the DTR reset aborts and auto-resumes a charge).
+  No bench PC needed for firmware updates any more.
