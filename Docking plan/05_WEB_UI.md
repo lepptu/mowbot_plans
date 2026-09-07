@@ -151,8 +151,12 @@ lines in the dock repo; listed in §5.1 A1.
 ### 2.2 Robot-side docking status (Phase C; published by `dock_manager`, 04 §3)
 
 `ros2/docking/status` (retained): `{state, feedback_state, physically_docked,
-started_at, retries, error_code, error_msg, id}`, `state ∈ idle | staging |
-approaching | waiting_charge | docked | undocking | failed | canceled`.
+drive_out_guard, reason, error_code, error_msg, started_at, retries, id}`
+(field contract decided 2026-09-07 — 04 §3 table is authoritative),
+`state ∈ idle | powering_lidar | staging | approaching | waiting_charge |
+docked | undocking | failed | canceled`. `reason` is the goto-style string
+code the `DOCK_REASON_TEXT` table (§5.3) maps to English; `error_code` /
+`error_msg` are the raw Nav2 values for the Logs tab.
 `ros2/docking/cmd`: `{action: "dock"|"undock"|"cancel", id}`.
 
 ### 2.3 Robot battery (already available)
@@ -368,7 +372,7 @@ Dock page only.)
     came from).
     Two-step confirm, method `map_click`. Marked "rough — re-record by
     parking before first autonomous dock".
-  - **Staging distance** number input (0.5–1.5 m, default 0.7) stored in
+  - ~~**Staging distance** number input (0.5–1.5 m, default 0.7) stored in~~ **Deferred 2026-09-07 (04 Q 1):** no input for now; `staging_offset_m` is written by the backend with the fixed value (2.0 m for the first tests, must equal nav2's `staging_x_offset`) and only feeds the marker. Originally: number input stored in
     `dock.json`; the staging marker follows live.
   - Keep-out hint: if the stored pose lies inside a mow-area outline, show
     "the dock sits inside area X — add a hole around it in the area editor"
@@ -382,6 +386,9 @@ Dock page only.)
   `auto_dock_on_low_battery`, 04 §6) — Phase D, rendered only when the
   param appears in `ros2/mowparams/status` (same pattern as the gate
   toggles).
+- **Auto-dock when the mission completes** toggle (bridge param
+  `auto_dock_on_mission_complete`, default off; 04 §6, decided 2026-09-07)
+  plus the small `auto_dock_delay_s` number — same rendering rule.
 - Dock Pi service restart / reboot / shutdown live on the Dock page (§4.1
   item 6), not here.
 
@@ -663,7 +670,7 @@ this one reads broker creds from it; unchanged here.)
 
   ```json
   { "pose": { "x": 12.34, "y": -5.67, "yaw": 1.571, "frame": "map" },
-    "staging_offset_m": 0.7,
+    "staging_offset_m": 2.0,
     "dock_backwards": true,
     "saved_at": "2026-09-06T10:15:00Z",
     "method": "robot_pose" | "map_click" }
@@ -679,7 +686,7 @@ against `config.datum`.
 ### 5.3 Phase C — control (after 04 §2–3 exist)
 
 - LXC ACL: `user webui` + `topic write ros2/docking/cmd` (04 §7).
-- Dock page control row (§4.1 item 2) + `DOCK_REASON_TEXT` (mirror `dock_manager`'s reason
+- Dock page control row (§4.1 item 2) + `DOCK_REASON_TEXT` keyed by `status.reason` (mirror `dock_manager`'s reason
   codes: `estop`, `mission_active`, `mission_state_unknown`, `no_dock_pose`,
   `nav2_unavailable`, `nav2_timeout`, `failed_to_charge`,
   `failed_to_detect_dock`, `cancel_timeout`, `not_docked` (undock while not
@@ -689,6 +696,12 @@ against `config.datum`.
   result with `physically_docked: true` shows "docked (action reported
   failure — WiFi at contact?)" per 04 §4.4.
 - "Undock & start" sequencing in `MissionControl` (§4.1).
+- Drive page (04 §10.4 item 2, decided 2026-09-07): while
+  `ros2/docking/status.physically_docked` is true show a warning above the
+  pad — "robot is in the dock — charging is switched off while you drive;
+  prefer Undock" — and reflect `drive_out_guard` in the docking status
+  line. The robot side (bridge drive-out guard) does the actual
+  enable-off; the UI only explains it.
 - Map: while `staging/approaching`, draw the staging → dock approach line on
   the map (dashed) so the operator sees what the robot is trying to do.
 

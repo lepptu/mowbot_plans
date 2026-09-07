@@ -90,10 +90,10 @@ Publishes (each RX frame, ~10 Hz):
 | `dock/event` | `std_msgs/String` | raw `EVT:*` passthrough (BOOT, NOCURRENT, EMERGENCY, …) for `dock_manager` cross-checks (04 §4.4) |
 | `dock/battery_state` | `sensor_msgs/BatteryState` | **the topic `docking_server` consumes** |
 
-`dock/battery_state` composition: `current` = +charge current (A) —
-with the `min_reported_current_while_seated` floor option from 04 §4.3
-(report `max(measured, floor)` while state ∈ {3,5}; load-bearing since
-the dock goes fully cold at COMPLETE, 02 §4); `voltage` = charger
+`dock/battery_state` composition: `current` = +charge current (A), the
+raw measured value (the `min_reported_current_while_seated` floor once
+planned here was dropped 2026-09-07 — 04 §4.3; a floor would break
+`UndockRobot`); `voltage` = charger
 voltage (equals the pack voltage while K1 is closed, ≈ 0 when cold);
 `power_supply_status` = `CHARGING` while state==3, `FULL` while
 state==5, else `NOT_CHARGING`; `present` = microswitch. Published at
@@ -185,7 +185,7 @@ cut (the firmware charges autonomously meanwhile).
   "pose": { "x": 12.34, "y": -5.67, "yaw": 1.571, "frame": "map" },
   "saved_at": "2026-07-12T10:15:00Z",
   "method": "robot_pose",
-  "staging_offset_m": 0.7
+  "staging_offset_m": 2.0
 }
 ```
 

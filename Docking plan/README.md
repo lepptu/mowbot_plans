@@ -1,9 +1,11 @@
 # Mowbot Docking & Charging — Master Plan
 
-> Status: **PLANNED 2026-07-10, revised 2026-07-31.** 01/02 carry the
+> Status 2026-09-07: **P0–P2 done** (dock built, fw 0.2.0 with a real
+> COMPLETE state, dock Pi live, web UI Phase A live); the robot-side charge
+> path (04 §1) is built and verified; **P3 robot side reviewed and ready to
+> implement** — 04 §10 (decisions) / §11 (TODO). 01/02 carry the
 > AC-side-switching revision (mains relay added, divider #2 deleted,
-> control PCB, permanent Pi↔Nano USB — see D11); the robot-side charge
-> path (04 §1) is **built and verified**. Dock build not started.
+> control PCB, permanent Pi↔Nano USB — see D11).
 >
 > Goal: mowbot docks itself and starts charging, fully controlled and
 > monitored from the web UI, with the dock position changeable from the
@@ -30,7 +32,7 @@ firmware). The dock Pi joins the robot's **zenoh** network over WiFi and
 runs a second instance of `mowbot_mqtt_bridge` straight to the LXC
 broker, so the web UI sees the charger even when the robot is off.
 Docking itself is **Nav2's `opennav_docking` server** (already installed,
-v1.3.10): the robot navigates to a staging pose ~0.7 m in front of the
+v1.3.10): the robot navigates to a staging pose in front of the (2.0 m for the first tests, 04 §2.1)
 dock, then drives blind on RTK into the contacts until charge current is
 detected. The dock pose is **recorded by parking the robot in the dock
 once** and pressing "Save dock here" in the web UI — this cancels any
@@ -117,10 +119,12 @@ field-test sequence in 04 §8.
    approach: start disabled (dock itself is a LiDAR obstacle), revisit
    after field tests (04 §5).
 3. Exact `SimpleChargingDock` parameter names/defaults in the installed
-   1.3.10 — verify with `ros2 param dump /docking_server` at first bench
-   launch (04 §4).
+   1.3.10 — names checked against the 1.3.10 source 2026-09-07 (04 §10.2);
+   final confirmation with `ros2 param dump /docking_server` at first
+   launch (04 §8.1).
 4. Dock placement vs RTK quality (multipath near walls) — measure σ of
    `/odometry/global` at the candidate spot before building the base
    (01 §6).
-5. Docking with an already-full battery may fail the wait-for-charge
-   step (taper current below threshold) — mitigations in 04 §4.3.
+5. ~~Docking with an already-full battery may fail the wait-for-charge
+   step~~ — **closed 2026-09-07** by dock fw 0.2.0: a seated robot always
+   draws ≥ 0.35 A through the charger for the first 60 s (04 §4.3).
