@@ -682,6 +682,16 @@ Design (next session, §11.7):
   map heading drift that motivated `map` in §10.9 no longer matters).
 - Retroreflective tape on the V arms is optional; the 0.45 m side surface
   shows the LD06 rewards it (I ≈ 220 vs 140 for a plain wall).
+- **Scan from the 2 m staging pose (2026-09-07, after a clean undock): the V
+  is NOT visible** — no points within 0.3 m of the expected apex 2.3 m
+  behind the lidar. Cause (owner): a slight slope tilts the robot so the 2D
+  scan plane misses the 92 mm-deep target at that range (3° pitch ≈ 10 cm
+  at 2 m). Hardware fix: **make the V arms tall (200–250 mm vertical
+  plates, centred on the seated lidar height ≈ 27 cm)**, optionally with
+  reflective tape; software side: **`staging_x_offset` down to 1.0–1.2 m**
+  (halves the plane offset, doubles the point count). The detector starts
+  on the dock.json prior and locks on when the V appears, so far-end
+  blindness is tolerable as long as the V is seen well before contact.
 
 ### 10.5 Open questions (owner)
 
@@ -776,6 +786,11 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
 
 ### 11.7 Lidar V detection (§10.10) — NEXT, before more dock attempts
 
+- [ ] Hardware (owner): taller V arms (200–250 mm vertical, centred ≈ 27 cm
+      above ground), optional reflective tape — the V is invisible from 2 m
+      on the slope (§10.10).
+- [ ] `staging_x_offset` → 1.0–1.2 m (nav2_params + dock.json
+      `staging_offset_m`) once the taller V exists.
 - [ ] `dock_v_detector` node in `mowing_navigation` (scan → V fit →
       `detected_dock_pose` + marker), params: V width 0.32, depth 0.092,
       opening 120°, window, min points.
