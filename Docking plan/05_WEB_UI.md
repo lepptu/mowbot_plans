@@ -159,11 +159,23 @@ code the `DOCK_REASON_TEXT` table (§5.3) maps to English; `error_code` /
 `error_msg` are the raw Nav2 values for the Logs tab.
 `ros2/docking/cmd`: `{action: "dock"|"undock"|"cancel", id}`.
 
-**Status 2026-09-12:** the robot side is live and docking works (04
-§10.12); `ros2/docking/status` is published with the field contract above
-plus `undocked` as a terminal state (04 §3). Phase C can be built against
-the real topic now; Phase B's `dock.json` currently exists as a one-off
-hand-written file (`staging_offset_m: 1.2`).
+**Status 2026-09-12 (evening): Phases B and C IMPLEMENTED and deployed**
+(`mowbot_web_ui` commit "Docking plan 05 Phase B + C"). Phase B: fileserver
+PUT for `config/dock.json`, `ros2/dock/pose_version`, `GET/PUT /api/dock`,
+`POST /api/dock/record`, `DockPanel` on the map (save + two-click place),
+dock/staging markers on both maps, Dock-page position card. Deviation:
+`/api/dock/record` stores as yaw the **dock axis measured by the lidar V**
+(`v_axis_yaw` in `ros2/docking/status`, published by `dock_manager` while the
+robot is seated with the V in view) instead of the robot's heading, which
+carries the ±2° funnel play; falls back to the heading with a warning. No
+staging-distance input (fixed 1.2 m in nav2, 04 Q 1). Phase C: `DockControl`
+(Dock / Undock / Cancel + progress + `DOCK_REASON_TEXT`), "Undock & start"
+in Mission control, Drive-page warnings (seated / docking running), dashed
+staging→dock line on the map, ACL `webui → ros2/docking/cmd`. First live
+use: record via the backend wrote `dock.json` with `yaw_source: lidar V
+axis` (−42.3°). Remaining: A2 (charge stats), D (auto-dock toggles — needs
+the bridge params in `param_control`, blocked by the dock bridge's shared
+node name; HA docking buttons), §11.4 robot-side mission gate while docked.
 
 ### 2.3 Robot battery (already available)
 

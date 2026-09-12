@@ -934,20 +934,20 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
 
 ### 11.5 LXC / web UI (05 Phase B **with** 11.1–11.2; Phase C after the first real runs)
 
-- [ ] ACL (user): `user webui` → `topic write ros2/docking/cmd`;
+- [x] (2026-09-12; HA rule not yet) ACL: `user webui` → `topic write ros2/docking/cmd`;
       HA rule `topic docking/cmd in 1 ros2/ ha/ros2/` + mosquitto restart.
-- [ ] Phase B (**early** — replaces the hand-written file): `robot/fileserver.py` writable map + `config/dock.json`
+- [x] (2026-09-12, deployed; record yaw = lidar V axis via `v_axis_yaw`) Phase B: `robot/fileserver.py` writable map + `config/dock.json`
       backups; `robot/version_watcher.py` entry; backend `GET/PUT
       /api/dock`, `POST /api/dock/record` (odometry cache, staleness 3 s,
       not-seated warning), writes `staging_offset_m: 2.0`; frontend
       `DockPanel`, markers on both maps (staging = pose + 2.0 m along yaw),
       Layers toggle, Dock-page position card. No staging-distance input.
-- [ ] Phase C: Dock page control row + `DOCK_REASON_TEXT` keyed by
+- [x] (2026-09-12, deployed) Phase C: Dock page control row + `DOCK_REASON_TEXT` keyed by
       `status.reason`; status merge rule; "Undock & start" in
       `MissionControl`; Drive-page docked warning + `drive_out_guard`;
       staging→dock dashed line while `staging/approaching`.
-- [ ] Fix stale fw-0.2.0 strings in `lib/dockStatus.js` (rows 10/12).
-- [ ] Deploy (user): LXC rsync + `npm run build` + backend restart; robot
+- [x] (2026-09-12) Fix stale fw-0.2.0 strings in `lib/dockStatus.js` (rows 10/12).
+- [x] (2026-09-12) Deploy: LXC rsync + `npm run build` + backend restart; robot
       `mowbot-fileserver` / `mowbot-version-watcher` restarts.
 
 ### 11.6 Field (§8.2) and P4
