@@ -411,6 +411,10 @@ Dock page only.)
 - **Auto-dock when the mission completes** toggle (bridge param
   `auto_dock_on_mission_complete`, default off; 04 §6, decided 2026-09-07)
   plus the small `auto_dock_delay_s` number — same rendering rule.
+  **Implemented 2026-09-12** as `DockingSettings.jsx` (own Apply, second press
+  to enable automation), together with the **top-up while parked** controls
+  (`topup_enabled`, `topup_voltage`, `topup_debounce_s`,
+  `topup_min_interval_s`); the Dock page shows the last automatic top-up.
 - Dock Pi service restart / reboot / shutdown live on the Dock page (§4.1
   item 6), not here.
 

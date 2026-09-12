@@ -730,7 +730,7 @@ Design (next session, §11.7):
 |---|---|---|
 | ~~1~~ | ~~Staging distance: fixed plugin parameter or per-`dock.json` value?~~ **Decided 2026-09-07: fixed in nav2_params, 2.0 m for the first tests** (`staging_x_offset: 2.0`, tune down later); no web-UI input for now (can be added later); `dock.json` keeps `staging_offset_m` for the map marker only, written with the same value. | — |
 | ~~2~~ | ~~`charging_threshold` — 0.15 A (plan), 0.2 A, or ~0.3 A (HANDOFF)?~~ **Decided 2026-09-07: 0.2 A first**, tune in the field if needed; §4.3 floor option deleted. | — |
-| ~~3~~ | ~~Top-up while parked (0.33 A drain after COMPLETE): robot-side voltage-triggered pulse, firmware `TOPUP_INTERVAL_S`, or manual only?~~ **Decided 2026-09-07: deferred** — first implementation is manual only (web-UI "Enable" pulse); automatic top-up is a later P4 item (§10.4 item 1 keeps the proposal). | — |
+| ~~3~~ | ~~Top-up while parked (0.33 A drain after COMPLETE): robot-side voltage-triggered pulse, firmware `TOPUP_INTERVAL_S`, or manual only?~~ **Deferred 2026-09-07, IMPLEMENTED 2026-09-12: robot-side** — `dock_manager` pulses the permission when seated on a COMPLETE dock and the robot pack stays < `topup_voltage` (40.5 V) for `topup_debounce_s` (60), at most every `topup_min_interval_s` (1800); params in Settings → Docking; `last_topup_at` in the status. Storage mode (~80 % hold + periodic full/balance charge, full before mowing) is the planned next layer on the same loop. | — |
 | ~~4~~ | ~~Manual drive-out while charging: auto enable-off on drive activity, UI warning, or accept the emergency break?~~ **Decided 2026-09-07: bridge drive-out guard (auto enable-off on manual motion while seated) + Drive-page warning** — spec in §10.4 item 2. | — |
 | ~~5~~ | ~~Status payload: add string `reason` (goto style) next to Nav2 `error_code`/`error_msg`, and `physically_docked`?~~ **Decided 2026-09-07: yes, both** — field contract in §3. | — |
 | ~~6~~ | ~~Auto-dock when a mission completes (not only on low battery)?~~ **Decided 2026-09-07: yes, with `auto_dock_on_mission_complete` (default off)** — §6 table row. | — |
@@ -960,6 +960,10 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
 - [ ] Enable `auto_dock_on_mission_complete`, then
       `auto_dock_on_low_battery` (temporarily raise
       `mow_battery_low_voltage`), one at a time.
-- [ ] Later / deferred: automatic top-up while parked (Q 3), adjustable
+- [x] (2026-09-12) Automatic top-up while parked (Q 3) — bridge params + Settings.
+- [ ] Storage mode: hold ~80 % while parked (two-threshold band on the same
+      loop), full/balance charge every N days and before mowing, Dock page
+      "storage hold" status + "Charge to full" action.
+- [ ] Later / deferred: adjustable
       staging distance from the web UI (Q 1), Phase D HA docking buttons,
       charge-session stats (05 A2).
