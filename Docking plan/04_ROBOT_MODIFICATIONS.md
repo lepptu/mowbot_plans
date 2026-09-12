@@ -825,7 +825,32 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
   and retry instead of pivoting in place), automatic heading seed from the
   V in dock_manager.
 
-### 11.7 Lidar V detection (§10.10) — IN PROGRESS 2026-09-12 (see §10.11)
+### 10.12 FIRST AUTONOMOUS DOCKING — 2026-09-12, run dock11
+
+From 6.2 m: staging navigation 28 s → V acquired at 1.51 m (1.6 cm /
+13.8° off after Nav2's staging tolerance) → guided convergence → **aligned
+4 mm / 1.5° at 0.59 m** → LOCK → open-loop straight push at 0.15 m/s →
+seat switch at +36 s → "Robot is charging!" → status `docked`, dock
+CHARGING 1.67 A. Seated: apex 0.32 m, 0.000 m lateral, axis −1°.
+
+What finally made the last 12 cm work (runs dock8–dock10 wedged the
+tyres there with near-perfect alignment): the final push must be
+**open-loop straight** — a target frozen in odom still steered the robot
+because the odom yaw drifts under slipping wheels on the slope, and every
+"correction" pushed a tyre into the funnel wall (13° pivot at 0.25 m/s).
+Now the plugin places the target straight behind the robot's current
+heading every cycle → zero steering. Speeds 0.15/0.15 m/s,
+v_angular_max 0.5, filter 0.2, overshoot 0.25 m, lock at 0.6 m / 3 cm / 3°.
+
+Operational lessons of the day: **a bringup restart resets both EKFs and
+throws away the heading calibration** — re-seed via `/set_pose`
+immediately (heading from the V when in view: dock axis − V axis angle);
+plugin code needs a process restart (a nav2 lifecycle RESET/STARTUP does
+NOT reload the .so, and STARTUP reported a failure); controller speeds
+are live-settable. The lidar idle power-off switches the lidar off
+between runs.
+
+### 11.7 Lidar V detection (§10.10) — DONE 2026-09-12 (first docking, §10.12); hardening below
 
 - [ ] Hardware (owner): taller V arms (200–250 mm vertical, centred ≈ 27 cm
       above ground), optional reflective tape — the V is invisible from 2 m
@@ -843,8 +868,9 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
       detector in bringup (lidar must be ON — dock_manager F53 covers it).
 - [x] (2026-09-12) Field: dock from staging with the e-stop ready — guidance
       verified to 7 mm / 1° at 0.44 m (dock8); blocked by the funnel.
-- [ ] Owner: funnel mouth tyre clearance (or guide at plate height); firmer
-      strip under the wheel tracks in front of the dock.
+- [x] (not needed for dock11 — the open-loop push docked with the funnel as
+      built; keep in mind if wedges recur) Owner: funnel mouth tyre clearance;
+      firmer strip under the wheel tracks in front of the dock.
 - [ ] Stall handling: `use_stall_detection` (joint_states velocity/effort)
       or a dock_manager no-progress watchdog → back off + retry.
 - [ ] dock_manager: seed the map EKF heading from the V when in view
