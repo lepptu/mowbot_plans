@@ -2,7 +2,7 @@
 
 > Status: **Phase A IMPLEMENTED 2026-09-06** (web UI + LXC live; dock-side
 > build/deploy owed on the workstation — see the Phase A status block
-> below). Phases A2/B/C/D still planned. Originally written against
+> below). Phases B/C/D and A2 done 2026-09-12 (A2: charge sessions live). Originally written against
 > `mowbot_dock` `HANDOFF.md` (2026-09-06: dock built, deployed, firmware
 > 0.1.4, dock Pi live at 192.168.1.91, three real charge cycles verified)
 > and the web UI repo (`mowbot_web_ui`, commit `e6dd578`). This file is the
@@ -60,7 +60,7 @@ evening: "replayed 7 retained topic(s)", `ros2/dock/charge_enable` and
 HA device check in Home Assistant (no LXC account can read
 `homeassistant/#`, so it cannot be verified from the broker), the §6.1
 checklist items not yet exercised.
-Phase A2 (charge sessions) next.
+Phase A2 (charge sessions) DONE 2026-09-12 — see §4.8 status.
 
 Deviations from the text below: the headline shows the robot's own
 battery voltage whenever the robot bridge is online and the charger is not
@@ -107,7 +107,7 @@ goes first.
 | **A — Telemetry** | New **Dock page** (status, live metrics, maintenance controls, dock Pi health + restart/reboot/shutdown), compact Charger card on the Status page, alerts, derived "Charging/Docked" robot status, top-bar ⚡, dock logs, HA telemetry + maintenance commands | dock bridge instance + LXC account/ACL | `mowbot_dock` repo, LXC, frontend |
 | **B — Dock pose** | Dock + staging markers on both maps; "Save dock at robot position"; "Place on map" fallback; `dock.json` on the robot fileserver | robot fileserver/watcher edits (small, in the web UI repo), backend endpoints | web UI repo (`robot/`, backend, frontend) |
 | **C — Control** | Dock / Undock / Cancel buttons with live action progress; "Undock & start"; docking reasons in plain English | 04 §2–3 (docking_server + `dock_manager`) | frontend, LXC ACL |
-| **A2 — Charge statistics** | Docked periods / bursts / Ah on the Dock page (§4.8) | A, plus a few real charge cycles for tuning | backend, frontend |
+| **A2 — Charge statistics** | Docked periods / bursts / Ah on the Dock page (§4.8) — **DONE 2026-09-12** (`backend/dock_stats.py`, `GET /api/dock/sessions`, `components/dock/DockSessions.jsx`, web UI commit `f382d52`) | A, plus a few real charge cycles for tuning | backend, frontend |
 | **D — Polish** | auto-dock toggle, HA docking buttons (Phase C topics) | A (+ C for auto-dock) | backend, frontend, dock `homeassistant.yaml` |
 
 Phase C UI can be built ahead of the robot side: it lights up when the
@@ -178,8 +178,8 @@ axis` (−42.3°). **2026-09-12 later:** §11.4 robot-side mission gate while do
 (owner, dock repo unit file `-r __node:=dock_mqtt_bridge`), the three
 auto-dock params are allowlisted under `param_control.nodes.mqtt_bridge_node`
 and the Settings page has a "Docking" panel (`DockingSettings.jsx`; enabling
-needs a second press). Remaining: A2 (charge stats), HA docking buttons
-(Phase D, dock repo `homeassistant.yaml` + LXC bridge rule).
+needs a second press). Remaining: HA docking buttons
+(Phase D, dock repo `homeassistant.yaml` + LXC bridge rule). A2 done 2026-09-12.
 
 ### 2.3 Robot battery (already available)
 
@@ -448,6 +448,24 @@ Nothing. Dock units are always-on; restart buttons live on the Dock page.
 > (reason / top-up / storage / charge_full fields) may be read for tagging
 > each burst with its cause. Consequence accepted: periods are only recorded
 > while the LXC backend is up.
+>
+> **Status 2026-09-12: IMPLEMENTED and live** (web UI `f382d52`).
+> `backend/dock_stats.py` (own store `backend/data/dock_sessions.json`,
+> `DOCK_STATS_PATH`), routed from the backend's single MQTT connection in
+> `robot_client.py` (dock topics are seen by the store first and never
+> consumed). `GET /api/dock/sessions` → `{current, periods[], totals,
+> dock_online}`; the Dock page card `components/dock/DockSessions.jsx`
+> polls it every 10 s. Deviations from the text below: burst = state enters
+> {2,3} → leaves to any other state (1 SEATED included); each burst carries a
+> **cause** tag from `ros2/docking/status` transitions (`dock` first burst of
+> a stay, `top-up` = `last_topup_at` changed, `storage` = `storage_holding`
+> released, `full` = `charge_full_requested`, else `manual`); a period also
+> records the robot pack voltage at seat-in/leave; a stay opened at backend
+> start is flagged `partial` and gets `gaps+1`; current samples > 30 s apart
+> are not integrated (gap). Totals carry lifetime accumulators so they
+> survive the 50-period window. First live stay was picked up at deploy
+> (cause `full`, the pending charge-to-full). Owed: observe a full stay end
+> to end and a top-up burst tag on real data.
 
 Shown as the last card of the Dock page (§4.1 item 7), not under the
 robot's `Statistics`. Backend `stats.py` already consumes the broker; add a
