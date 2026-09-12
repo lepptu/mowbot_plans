@@ -442,6 +442,13 @@ Nothing. Dock units are always-on; restart buttons live on the Dock page.
 
 ### 4.8 Charge-session statistics — on the Dock page (decided 2026-09-06: wanted)
 
+> **Owner decision 2026-09-12:** the statistics live on the Dock page and
+> the data is stored **server side only** (LXC backend JSON file). Nothing is
+> written on the robot Pi or the dock Pi; the dock manager's docking status
+> (reason / top-up / storage / charge_full fields) may be read for tagging
+> each burst with its cause. Consequence accepted: periods are only recorded
+> while the LXC backend is up.
+
 Shown as the last card of the Dock page (§4.1 item 7), not under the
 robot's `Statistics`. Backend `stats.py` already consumes the broker; add a
 sibling `dock_stats.py` subscribing `ros2/dock/#` (own JSON file, own
