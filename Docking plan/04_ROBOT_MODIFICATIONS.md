@@ -961,9 +961,14 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
       `auto_dock_on_low_battery` (temporarily raise
       `mow_battery_low_voltage`), one at a time.
 - [x] (2026-09-12) Automatic top-up while parked (Q 3) — bridge params + Settings.
-- [ ] Storage mode: hold ~80 % while parked (two-threshold band on the same
-      loop), full/balance charge every N days and before mowing, Dock page
-      "storage hold" status + "Charge to full" action.
+- [x] (2026-09-12, OFF by default) Storage mode: hold ~80 % while parked
+      (`storage_low_v` 39.6 / `storage_high_v` 40.6 band on the top-up loop),
+      full/balance charge every `storage_full_interval_days` (7) or via
+      `{"action":"charge_full"}`; `last_full_charge_at` persisted in
+      `mowing_data/config/dock_manager_state.json`; Dock page "storage hold"
+      status + "Charge to full"; Settings → Docking controls. Untested live.
+- [ ] Storage mode follow-up: "full before mowing" once resume-after-charge /
+      scheduling exists (today: press Charge to full ahead of a long day).
 - [ ] Later / deferred: adjustable
       staging distance from the web UI (Q 1), Phase D HA docking buttons,
       charge-session stats (05 A2).

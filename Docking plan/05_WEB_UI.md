@@ -415,6 +415,11 @@ Dock page only.)
   to enable automation), together with the **top-up while parked** controls
   (`topup_enabled`, `topup_voltage`, `topup_debounce_s`,
   `topup_min_interval_s`); the Dock page shows the last automatic top-up.
+  **Storage mode** (2026-09-12, off by default): `storage_mode_enabled`,
+  `storage_low_v`, `storage_high_v`, `storage_full_interval_days` in the same
+  panel; Dock page "⚡ Charge to full" button (`{"action":"charge_full"}`),
+  "storage hold" line, last full charge; `dockStatus.js` row 12 shows
+  "Docked · storage hold" instead of "charging DISABLED" while the bridge holds.
 - Dock Pi service restart / reboot / shutdown live on the Dock page (§4.1
   item 6), not here.
 
