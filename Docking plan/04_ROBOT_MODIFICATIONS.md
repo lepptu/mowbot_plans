@@ -926,11 +926,10 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
 
 ### 11.4 Mission node (`mowing_navigation`) — P4 gate, can ride with 11.2
 
-- [ ] `start_mission`: refuse when `/dock/microswitch` (latched, cached
-      like `motors_allowed`) is true — reason text "robot is in the dock —
-      Undock first"; absent/stale topic ⇒ allow with a warn.
-- [ ] Build/deploy (user): one `colcon build` for `mowing_navigation`,
-      restart `mowbot-launch-mow-mission.service`.
+- [x] (2026-09-12, verified live: start refused while seated) `start_mission`: refuse when `/dock/microswitch` (latched, cached
+      like `motors_allowed`, fresh < 5 s) is true — "robot is in the charging
+      dock - Undock first"; absent/stale topic ⇒ allow with a warn.
+- [x] (2026-09-12) Built, `mowbot-launch-mow-mission.service` restarted.
 
 ### 11.5 LXC / web UI (05 Phase B **with** 11.1–11.2; Phase C after the first real runs)
 
