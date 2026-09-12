@@ -784,21 +784,51 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
 - [ ] §8.2 field checklist — first item needs Phase B (11.5); Dock/Undock
       via `mosquitto_pub -t ros2/docking/cmd` until Phase C.
 
-### 11.7 Lidar V detection (§10.10) — NEXT, before more dock attempts
+### 10.11 Field log 2026-09-12 — V-guided docking, first day
+
+- Dock link: after a ROBOT zenoh-router restart the dock's publications
+  stop propagating (TCP session stays up) → restart the dock zenoh router
+  (`ros2/dock/launch/cmd {"id":"dock_zenoh","action":"restart"}`).
+- V visibility (V as built, on the charger): seated 102 pts at 0.31 m;
+  1.3 m → 20 pts, apex ±1 cm, axis ±6°/scan; 2 m aligned → NOT visible
+  (scan plane hits the charger front below the V: slope) ⇒
+  **`staging_x_offset` 1.2 m**. Off-axis > ~30° only the V's outside is
+  seen (convex) → concavity check in the detector.
+- Detector fixes from live runs: axis = bisector of the fitted arm
+  directions (chord midpoint swung ±20° with a clipped arm); size
+  tolerances tightened (a 0.44 m garden corner matched at ±45 %).
+- Plugin fixes from live runs: transform at the scan stamp; target
+  overshoot 0.25 m past the seated pose (graceful 1/r gain → zigzag in
+  place 0.35 m short of the target); filter 0.05 → 0.2; final-stretch
+  target LOCK (apex < 0.6 m, lateral < 3 cm, yaw < 3°) for a straight push.
+- Heading: the map heading estimate is corrupted by every slip/spin
+  (5°…167° errors seen); seeded by hand via `/set_pose` (both EKFs listen)
+  with the dock-axis heading. **When the V is in view the true heading is
+  `dock_axis_yaw − axis_angle_in_robot_frame`** — a free heading fix for
+  dock_manager to apply automatically (TODO).
+- Best run (dock7, from 5.9 m): staging nav OK → V acquired at 1.48 m
+  (47 cm / 20° off after Nav2's staging tolerance) → 1 cm / 2° at 0.5 m
+  → twisted 7° in the last 8 cm, wedged the TYRES in the funnel mouth at
+  5 cm lateral, e-stop. Owner: the funnel catches the tyres before the
+  body — more tyre clearance at the mouth / guide at plate height.
+- Wheel slip on the slope in front of the dock made two runs spin; a
+  firmer strip under the wheel tracks would help every approach.
+
+### 11.7 Lidar V detection (§10.10) — IN PROGRESS 2026-09-12 (see §10.11)
 
 - [ ] Hardware (owner): taller V arms (200–250 mm vertical, centred ≈ 27 cm
       above ground), optional reflective tape — the V is invisible from 2 m
       on the slope (§10.10).
-- [ ] `staging_x_offset` → 1.0–1.2 m (nav2_params + dock.json
-      `staging_offset_m`) once the taller V exists.
-- [ ] `dock_v_detector` node in `mowing_navigation` (scan → V fit →
+- [x] (2026-09-12) `staging_x_offset` → 1.2 m (nav2_params + dock.json
+      `staging_offset_m`).
+- [x] (2026-09-12, mowing_navigation) `dock_v_detector` node (scan → V fit →
       `detected_dock_pose` + marker), params: V width 0.32, depth 0.092,
       opening 120°, window, min points.
 - [ ] Bench with the seated scan: apex at (−0.31, 0.00) lidar frame, then
       from 0.5 / 1 / 2 m on the axis and ±20° off-axis (robot pushed by hand).
-- [ ] Plugin: `use_external_detection_pose`, `v_apex_to_base_m` 0.36,
+- [x] (2026-09-12: `apex_to_base_m` 0.37, overshoot 0.25, lock) Plugin: `use_external_detection_pose`, `v_apex_to_base_m` 0.36,
       `external_detection_timeout` 1.0, filter; prior fallback.
-- [ ] nav2_params: enable detection, `fixed_frame: odom`; launch: start the
+- [x] (2026-09-12) nav2_params: enable detection, `fixed_frame: odom`; launch: start the
       detector in bringup (lidar must be ON — dock_manager F53 covers it).
 - [ ] Field: dock from staging with the e-stop ready; then §8.2 items.
 
