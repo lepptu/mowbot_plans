@@ -798,12 +798,12 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
       Nav2 feedback → `staging | approaching | waiting_charge`, results →
       `docked | failed | canceled` with mapped `reason`.
 - [ ] `EVT:NOCURRENT` cross-check warning (§4.4) — optional for the first cut.
-- [x] (2026-09-07 — declared, default off; **NOT allowlisted**: the dock bridge shares the node name `mqtt_bridge_node`, so `/mqtt_bridge_node/set_parameters` is ambiguous on zenoh — give the dock instance a distinct node name first) P4 params (declared now, default off, allowlisted in `param_control`):
+- [x] (2026-09-07 declared, default off; **allowlisted 2026-09-12** once the dock bridge was renamed to `/dock_mqtt_bridge` — Settings → Docking toggles live, both flags still off) P4 params (declared now, default off, allowlisted in `param_control`):
       `auto_dock_on_low_battery`, `auto_dock_on_mission_complete`,
       `auto_dock_delay_s` (5). Triggers: mission_state `paused`/`battery`
       → `stop` on `/mowing/mission_cmd` → wait `idle` (30 s) → `dock`;
       mission_state edge → `idle`/`complete` → delay → `dock`.
-- [x] (2026-09-07; params not in `param_control` yet, see above) `config/topics.yaml`: `docking:` section (cmd/status topics,
+- [x] (2026-09-07; params allowlisted under `mqtt_bridge_node` 2026-09-12) `config/topics.yaml`: `docking:` section (cmd/status topics,
       `dock_json_path`, `dock_stale_s`, link-loss comment) + the three
       params in `param_control`.
 - [x] (2026-09-07) Built + `mowbot-mqtt-bridge.service` restarted; startup line OK, refusals `already_docked` / `bad_action`, cancel→idle verified over MQTT.
