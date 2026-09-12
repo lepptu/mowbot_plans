@@ -813,6 +813,17 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
   body — more tyre clearance at the mouth / guide at plate height.
 - Wheel slip on the slope in front of the dock made two runs spin; a
   firmer strip under the wheel tracks would help every approach.
+- **Run dock8 (after filter 0.2 + overshoot + target lock): guidance
+  complete** — staging 7 cm / 18° off → 0.6 m: 6 mm / 2.1° → target locked
+  → straight push → **0.44 m: 7 mm / 1.1°** → blocked at 0.43 m (seated =
+  0.31 m), pivoted 11° while pushing, tyres wedged in the funnel mouth
+  again. Two identical stops at 0.42–0.43 m with near-perfect alignment ⇒
+  **mechanical: the funnel catches the tyres 12 cm before seating** (mouth
+  width vs tyre track at wheel height, or a lip on the slope). Owner action
+  before more runs. Software TODOs after that: stall handling (docking
+  server `use_stall_detection` from the hoverboard joint states → back off
+  and retry instead of pivoting in place), automatic heading seed from the
+  V in dock_manager.
 
 ### 11.7 Lidar V detection (§10.10) — IN PROGRESS 2026-09-12 (see §10.11)
 
@@ -830,7 +841,15 @@ Ordered as §9. Tick items as they land; deploy-side items are user-run.
       `external_detection_timeout` 1.0, filter; prior fallback.
 - [x] (2026-09-12) nav2_params: enable detection, `fixed_frame: odom`; launch: start the
       detector in bringup (lidar must be ON — dock_manager F53 covers it).
-- [ ] Field: dock from staging with the e-stop ready; then §8.2 items.
+- [x] (2026-09-12) Field: dock from staging with the e-stop ready — guidance
+      verified to 7 mm / 1° at 0.44 m (dock8); blocked by the funnel.
+- [ ] Owner: funnel mouth tyre clearance (or guide at plate height); firmer
+      strip under the wheel tracks in front of the dock.
+- [ ] Stall handling: `use_stall_detection` (joint_states velocity/effort)
+      or a dock_manager no-progress watchdog → back off + retry.
+- [ ] dock_manager: seed the map EKF heading from the V when in view
+      (`/set_pose`, yaw = dock axis − V axis angle) before the staging leg.
+- [ ] Then §8.2: ten clean dockings, off-axis starts, undock cold check.
 
 ### 11.4 Mission node (`mowing_navigation`) — P4 gate, can ride with 11.2
 
