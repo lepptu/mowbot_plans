@@ -173,9 +173,13 @@ staging-distance input (fixed 1.2 m in nav2, 04 Q 1). Phase C: `DockControl`
 in Mission control, Drive-page warnings (seated / docking running), dashed
 staging→dock line on the map, ACL `webui → ros2/docking/cmd`. First live
 use: record via the backend wrote `dock.json` with `yaw_source: lidar V
-axis` (−42.3°). Remaining: A2 (charge stats), D (auto-dock toggles — needs
-the bridge params in `param_control`, blocked by the dock bridge's shared
-node name; HA docking buttons), §11.4 robot-side mission gate while docked.
+axis` (−42.3°). **2026-09-12 later:** §11.4 robot-side mission gate while docked done;
+**Phase D toggles done** — the dock bridge now runs as `/dock_mqtt_bridge`
+(owner, dock repo unit file `-r __node:=dock_mqtt_bridge`), the three
+auto-dock params are allowlisted under `param_control.nodes.mqtt_bridge_node`
+and the Settings page has a "Docking" panel (`DockingSettings.jsx`; enabling
+needs a second press). Remaining: A2 (charge stats), HA docking buttons
+(Phase D, dock repo `homeassistant.yaml` + LXC bridge rule).
 
 ### 2.3 Robot battery (already available)
 
