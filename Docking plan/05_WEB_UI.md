@@ -159,6 +159,12 @@ code the `DOCK_REASON_TEXT` table (§5.3) maps to English; `error_code` /
 `error_msg` are the raw Nav2 values for the Logs tab.
 `ros2/docking/cmd`: `{action: "dock"|"undock"|"cancel", id}`.
 
+**Status 2026-09-12:** the robot side is live and docking works (04
+§10.12); `ros2/docking/status` is published with the field contract above
+plus `undocked` as a terminal state (04 §3). Phase C can be built against
+the real topic now; Phase B's `dock.json` currently exists as a one-off
+hand-written file (`staging_offset_m: 1.2`).
+
 ### 2.3 Robot battery (already available)
 
 `ros2/hoverboard/battery_voltage`, `ros2/hoverboard/battery_state`

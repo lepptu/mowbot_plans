@@ -1,10 +1,13 @@
 # 04 — Robot (Mowbot) Modifications
 
-> Status: **REVIEWED 2026-09-07, ready to implement** — §10 is the
-> pre-implementation review (all 8 owner questions decided), §11 the
-> implementation TODO; §2.1/§3/§8/§9 carry the decided values (staging
-> 2.0 m, `charging_threshold` 0.2 A, drive-out guard, status contract, no
-> fake bench). Originally planned 2026-07-10, updated 2026-07-31. §1 charge-path
+> Status: **DOCKING WORKS — first autonomous dockings 2026-09-12** (§10.12,
+> 4/5 that day, 5/5 undocks). Robot side implemented: Nav2 docking server
+> + custom `MowbotChargingDock` (seat microswitch + lidar V detection),
+> `dock_v_detector`, bridge `dock_manager` (Dock/Undock/Cancel, sequenced
+> undock, drive-out guard, automatic heading seed from the V). §2.1 is the
+> as-deployed config, §10 the review + field findings (§10.7–§10.12), §11
+> the TODO (remaining: stall handling, §11.4 mission gate, web UI Phase
+> B/C, P4). Originally planned 2026-07-10, updated 2026-07-31. §1 charge-path
 > hardware is **built and verified** (0 V on pads undocked); references
 > aligned with the revised [01](01_HARDWARE.md)/[02](02_ARDUINO_FIRMWARE.md)
 > (AC-side switching, dock state renumbering). Part of the docking master
@@ -32,34 +35,53 @@ exact property the dock side (01 §5) relies on.
 ### 2.1 `nav2_params.yaml` — new `docking_server` section (draft)
 
 ```yaml
+# AS DEPLOYED 2026-09-12 (first autonomous dockings) — bringup/config/nav2_params.yaml
 docking_server:
   ros__parameters:
+    enable_stamped_cmd_vel: True
     controller_frequency: 20.0
     initial_perception_timeout: 5.0
-    wait_charge_timeout: 15.0          # microswitch starts the K1→AC sequence (02 §4); budget = AC-on ramp (01 §8 measured) + WiFi slack; 15 s comfortable
-    dock_approach_timeout: 60.0        # 2.0 m reverse at 0.10–0.15 m/s ≈ 15–20 s, plus settling
+    wait_charge_timeout: 15.0          # charging starts ~200 ms after seating (02 §8)
+    dock_approach_timeout: 60.0
     undock_linear_tolerance: 0.05
     undock_angular_tolerance: 0.1
     max_retries: 3
     base_frame: "base_link"
-    fixed_frame: "odom"                # dock pose transformed map→odom once at action start; odom is smooth for control
-    dock_backwards: true               # robot BACKS into the dock, contacts on the rear (README D10 rev. 2026-09-06)
+    fixed_frame: "odom"                # the V detection is re-measured every cycle → the smooth short-term frame (§10.10)
+    dock_backwards: true               # robot BACKS in; the plugin flips the refined yaw to the server's "into the dock" convention (§10.8)
     dock_prestaging_tolerance: 0.5
     dock_plugins: ["mowbot_dock_plugin"]
     mowbot_dock_plugin:
-      plugin: "mowing_navigation::MowbotChargingDock"   # CUSTOM (D8 promoted 2026-09-07, §10.7): isDocked = seat microswitch
-      charging_threshold: 0.2              # A (decided 2026-09-07) — 10× the ±0.02 A noise floor, well under the ≥0.35 A a seated robot always draws through the charger (02 §8); ~2 A in bulk charge
-      docking_threshold: 0.05              # m — pose FALLBACK only (microswitch topic stale)
-      staging_x_offset: 2.0                # POSITIVE: staging = seated pose + 2.0 m along the recorded yaw, i.e. in FRONT of the seated robot (verified in 1.3.10, §10.2 item 2). 2.0 m chosen 2026-09-07 "to be safe" for the first tests — tune down toward 0.7 m once the blind reverse proves accurate (see note below)
-      staging_yaw_offset: 0.0              # robot at staging faces away from the dock; the server rotates the approach target by π itself for dock_backwards
-      telemetry_stale_s: 5.0               # microswitch / battery_state older than this = dock Pi unreachable
+      plugin: "mowing_navigation::MowbotChargingDock"   # custom (D8): isDocked = seat microswitch; V detection (§10.10)
+      charging_threshold: 0.2              # A
+      docking_threshold: 0.05              # pose fallback only (microswitch stale)
+      staging_x_offset: 1.2                # POSITIVE, in front of the seated robot; V visible from ~1.3 m in (§10.11)
+      staging_yaw_offset: 0.0
+      telemetry_stale_s: 5.0
       microswitch_topic: "/dock/microswitch"
       battery_state_topic: "battery_state" # remapped to /dock/battery_state in navigation.launch.py
+      use_external_detection_pose: true    # dock_v_detector → detected_dock_pose (lidar frame)
+      external_detection_topic: "detected_dock_pose"
+      external_detection_timeout: 1.0
+      apex_to_base_m: 0.37                 # V apex → seated base_link (measured seated)
+      filter_coef: 0.2
+      target_overshoot_m: 0.25             # aim past the seated pose (graceful 1/r gain) — contact ends the approach
+      lock_dist_m: 0.6                     # final stretch: lock once aligned → line-follow on the measured V axis (§10.12)
+      lock_lateral_m: 0.03
+      lock_yaw_deg: 3.0
     controller:
       k_phi: 3.0
       k_delta: 2.0
-      v_linear_min: 0.10
-      v_linear_max: 0.15                   # gentle contact; hoverboard low-speed floor applies (R13 lesson: too slow may not move)
+      v_linear_min: 0.15
+      v_linear_max: 0.15
+      v_angular_max: 0.5                   # cap the pivot when a tyre catches
+      use_collision_detection: false       # the dock is a LiDAR obstacle (§5)
+      costmap_topic: "local_costmap/costmap_raw"
+      footprint_topic: "local_costmap/published_footprint"
+      transform_tolerance: 0.1
+      projection_time: 5.0
+      simulation_time_step: 0.1
+      dock_collision_threshold: 0.3
 ```
 
 **Staging distance 2.0 m (2026-09-07):** chosen for the first real-dock
@@ -85,6 +107,9 @@ version exposes `use_collision_detection` (see §5).
 - Remap `battery_state` → `/dock/battery_state` (published by the dock
   agent over zenoh, 03 §3.1).
 - Add `docking_server` to the lifecycle manager `node_names` list.
+- Start `dock_v_detector` (mowing_navigation) as a plain node in the same
+  launch (parameters: `apex_to_base_m` 0.37, size tolerances) — it
+  publishes `detected_dock_pose` whenever the lidar sees the V.
 - Restart-of-bringup required on rollout (nav2_params change — same
   rollout class as F32).
 
@@ -160,6 +185,12 @@ Behavior:
 - Subscribes `/dock/microswitch` + `/dock/state` (zenoh) to enrich
   retained status with `physically_docked` — the UI's "docked" truth is
   the microswitch, not the action result.
+- **Automatic heading seed from the V** (2026-09-12, §11.7): while seated
+  with the V behind the robot, true heading = dock.json yaw − V axis angle;
+  published to `/set_pose` (both EKFs) when the estimate is off by
+  > 2°. Runs after every docking, at undock start (lidar on, waits ≤ 12 s
+  for the V before pulling out) and every 30 s while docked. Removes the
+  manual calibration that every bringup restart / wheel slip used to cost.
 - **Drive-out guard** (decided 2026-09-07, spec §10.4 item 2): manual
   motion on `/hoverboard_base_controller/cmd_vel` while seated and no
   docking action in flight ⇒ `charge_enable_cmd false` first, so K1 opens
@@ -882,9 +913,15 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
       firmer strip under the wheel tracks in front of the dock.
 - [ ] Stall handling: `use_stall_detection` (joint_states velocity/effort)
       or a dock_manager no-progress watchdog → back off + retry.
-- [ ] dock_manager: seed the map EKF heading from the V when in view
-      (`/set_pose`, yaw = dock axis − V axis angle) before the staging leg.
-- [ ] Then §8.2: ten clean dockings, off-axis starts, undock cold check.
+- [x] (2026-09-12, bridge dock_manager; first check −36.2° → −40.4°)
+      dock_manager: seed the map EKF heading from the V when in view
+      (`/set_pose`, yaw = dock axis − V axis angle) — after docking, at
+      undock start, periodically while docked.
+- [ ] Then §8.2: ten clean dockings, off-axis starts, undock cold check
+      (2026-09-12 so far: 5 undocks 5/5; dockings dock11–13, dock15 ✓,
+      dock14 ✗ before the line-follow fix).
+- [ ] Nice-to-have: keep the lidar on during docking sessions (F29 idle
+      power-off adds a power-on wait to every command).
 
 ### 11.4 Mission node (`mowing_navigation`) — P4 gate, can ride with 11.2
 

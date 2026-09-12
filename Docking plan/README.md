@@ -1,9 +1,12 @@
 # Mowbot Docking & Charging — Master Plan
 
-> Status 2026-09-07: **P0–P2 done** (dock built, fw 0.2.0 with a real
-> COMPLETE state, dock Pi live, web UI Phase A live); the robot-side charge
-> path (04 §1) is built and verified; **P3 robot side reviewed and ready to
-> implement** — 04 §10 (decisions) / §11 (TODO). 01/02 carry the
+> Status 2026-09-12: **P0–P2 done; P3 robot side WORKING — first
+> autonomous dockings 2026-09-12** (04 §10.12: staging via Nav2, final
+> approach guided by the dock's lidar V target, seat-switch docked
+> detection, sequenced undock; 4/5 dockings, 5/5 undocks that day). Web
+> UI Phase A live; Phase B/C (dock pose button, Dock/Undock buttons) and
+> P4 automation remain — 04 §11. D2 revised: "blind RTK docking" became
+> RTK to staging + lidar V for the last 1.2 m (04 §10.9–10.10). 01/02 carry the
 > AC-side-switching revision (mains relay added, divider #2 deleted,
 > control PCB, permanent Pi↔Nano USB — see D11).
 >
@@ -74,7 +77,7 @@ Two independent data paths, on purpose:
 | # | Decision | Rationale |
 |---|---|---|
 | D1 | Use `opennav_docking` (Nav2 Jazzy built-in), not a custom docking node | Installed already; handles staging navigation, retry logic, wait-for-charge, undock. Actions: `/dock_robot`, `/undock_robot`. |
-| D2 | **Blind RTK docking** (no camera/AprilTag) in phase 1 | RTK gives 2–3 cm; mechanical funnel absorbs the rest. The robot camera + AprilTag is a documented upgrade path if field results demand it (`opennav_docking` supports an external `detected_dock_pose` topic). |
+| D2 | ~~Blind RTK docking~~ **RTK/Nav2 to a 1.2 m staging pose, then lidar-guided approach on the dock's V target** (rev. 2026-09-12, 04 §10.9–10.12) | Blind docking failed: the map heading estimate is unobserved at rest and 20° off after the turn at staging. The 2D lidar sees the 320 × 92 mm V on the charger from ~1.3 m; `dock_v_detector` + the custom plugin feed `opennav_docking`'s external detection pose. |
 | D3 | Dock pose passed **explicitly in the `DockRobot` action** (`use_dock_id: false`), stored in `~/pi_ws/mowing_data/config/dock.json` on the robot fileserver | Moving the dock = update one JSON from the web UI. No docking-server restart, no dock-database reload. Same infra as areas/keepouts (token PUT, backups, version watcher). |
 | D4 | Dock pose is **recorded by parking the robot** in the dock ("Save dock here") | Guarantees the stored pose is in exactly the localization frame the approach will use; cancels systematic GPS/antenna offsets. Map-click entry is the fallback. |
 | D5 | Dock-side Nano over **USB serial** (not Pi GPIO) | Proven robot pattern (tolerant CSV parser, DTR auto-reset handling); Nano provides the ADC the Pi lacks; USB powers the Nano; keeps 42 V wiring away from Pi GPIO. |
@@ -116,8 +119,8 @@ field-test sequence in 04 §8.
 1. Charger: reuse the existing hoverboard charger or buy a dedicated
    42 V 2–4 A unit for the dock (recommended — see 01 §2).
 2. `use_collision_detection` on the docking server during final
-   approach: start disabled (dock itself is a LiDAR obstacle), revisit
-   after field tests (04 §5).
+   approach: disabled (dock itself is a LiDAR obstacle) — confirmed fine
+   in the 2026-09-12 field runs (04 §5).
 3. Exact `SimpleChargingDock` parameter names/defaults in the installed
    1.3.10 — names checked against the 1.3.10 source 2026-09-07 (04 §10.2);
    final confirmation with `ros2 param dump /docking_server` at first
