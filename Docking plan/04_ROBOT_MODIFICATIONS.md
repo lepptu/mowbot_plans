@@ -850,6 +850,15 @@ NOT reload the .so, and STARTUP reported a failure); controller speeds
 are live-settable. The lidar idle power-off switches the lidar off
 between runs.
 
+**Repeat runs 2026-09-12 afternoon:** dock12 (from staging, 11 s) ✓,
+dock13 (undock → GoTo 4 m / 45° off-axis → dock) ✓, dock14 (5 m on-axis)
+✗ — lock at 1.6 cm / 2.7°, then the OPEN-LOOP push drifted/yawed 18° on
+the slope and stuck (helped by hand). Fix: after the lock, **gentle
+line-follow on the measured V axis** (fixed 0.5 m lookahead pure pursuit
+from each scan) instead of open-loop. dock15 (5.5 m / 30° off the other
+side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
+4/5 autonomous, 5/5 with the final method. Undock 5/5.
+
 ### 11.7 Lidar V detection (§10.10) — DONE 2026-09-12 (first docking, §10.12); hardening below
 
 - [ ] Hardware (owner): taller V arms (200–250 mm vertical, centred ≈ 27 cm
