@@ -911,8 +911,9 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
 - [x] (not needed for dock11 — the open-loop push docked with the funnel as
       built; keep in mind if wedges recur) Owner: funnel mouth tyre clearance;
       firmer strip under the wheel tracks in front of the dock.
-- [ ] Stall handling: `use_stall_detection` (joint_states velocity/effort)
-      or a dock_manager no-progress watchdog → back off + retry.
+- [ ] Stall handling → planned separately in [06_STALL_HANDLING.md](06_STALL_HANDLING.md)
+      (dock_manager no-progress watchdog → cancel, back off 15 cm, retry ×2,
+      reason `stalled`); deferred by the owner 2026-09-12.
 - [x] (2026-09-12, bridge dock_manager; first check −36.2° → −40.4°)
       dock_manager: seed the map EKF heading from the V when in view
       (`/set_pose`, yaw = dock axis − V axis angle) — after docking, at

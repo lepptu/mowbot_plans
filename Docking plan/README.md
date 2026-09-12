@@ -23,6 +23,7 @@
 | [03_DOCK_PI_ROS2_AND_WEBUI.md](03_DOCK_PI_ROS2_AND_WEBUI.md) | Dock Raspberry Pi: OS, zenoh, dock agent node, MQTT bridge to the LXC, web UI dock setup guide |
 | [04_ROBOT_MODIFICATIONS.md](04_ROBOT_MODIFICATIONS.md) | Robot changes: charge contacts, Nav2 `docking_server`, bridge `dock_manager`, mission integration |
 | [05_WEB_UI.md](05_WEB_UI.md) | Web UI: what the dock/charger shows on each page, dock pose on the map, Dock/Undock control, phased implementation (supersedes 03 §6) |
+| [06_STALL_HANDLING.md](06_STALL_HANDLING.md) | Planned: `dock_manager` stall detection + back-off + retry when a tyre catches in the funnel mouth (deferred until the line-follow shows how often it happens) |
 
 ## The one-paragraph design
 
