@@ -2,7 +2,8 @@
 
 > Status: **REVISED 2026-07-31** (originally planned 2026-07-10), **field-revised
 > 2026-09-07 for firmware v0.2.0** (completion rule, weld-detector grace, rail
-> compensation — §4/§8) — brought in line
+> compensation — §4/§8), **2026-09-12 for v0.2.1** (weld detector (b) demoted
+> to the `EVT:VRISE` advisory — §4/§8) — brought in line
 > with the revised [01_HARDWARE.md](01_HARDWARE.md): **two-relay AC-side switching**
 > (K1 42 V DC + K2 mains pilot, strict AC-last-on / AC-first-off sequencing),
 > **voltage divider #2 deleted**, **pre-mow self-test**, **DTR reboot promoted to a
@@ -77,7 +78,9 @@ Since robot FW 2.1.0 the style also includes comma-free `EVT:<TYPE>[:detail]`
 event lines beside the status frame — adopted here: `EVT:BOOT:<ver>` once at
 startup (the Pi's re-handshake trigger after a DTR reset), `EVT:VER:<ver>`
 every 60 s, `EVT:SELFTEST:OK|FAIL` after a self-test, `EVT:EMERGENCY:SWITCH`
-on a seat-switch release under load, `EVT:NOCURRENT` advisory (see §4).
+on a seat-switch release under load, `EVT:NOCURRENT` advisory (see §4),
+`EVT:VRISE:<min>:<now>` advisory (v0.2.1: the isolated charger output climbed
+back up after AC-off, see §4).
 
 **Pi → Nano (command frame, 4 fields):**
 
@@ -162,19 +165,24 @@ IDLE/COMPLETE ──selfTest edge──► SELFTEST: K1 stays open, AC on ≤ 2 
 any live state ──microswitch released──► open BOTH immediately → IDLE
         (emergency, unsequenced; EVT:EMERGENCY:SWITCH)
 any live state ──current > 4.0 A for 50 ms──► open BOTH, latch FAULT 1
-AC commanded off ──V#1 rising, or V#1 > 35 V past WELD_WINDOW_S──► latch FAULT 2
+AC commanded off ──V#1 > 35 V past WELD_WINDOW_S──► latch FAULT 2
+        (V#1 *rising* after AC-off = EVT:VRISE advisory only, since v0.2.1)
 FAULT (1/2) ──clearFault edge from Pi (accepted only at 0 A)──► IDLE
 ```
 
 Additional rules:
 
-- **Welded-AC-relay detection is three detectors, not one** (01 §2/§3): (a)
-  current refuses to die during DRAIN — the sharpest one; (b) V#1 *rising*
-  while AC is commanded off — caps never rise on their own; (c) V#1 still
-  > 35 V once `WELD_WINDOW_S` (5 min) after AC-off has passed. The window
-  exists because the charger's output caps decay only through the 110 kΩ
-  divider — τ is on the order of minutes, so "still high shortly after
-  AC-off" proves nothing; *steady/rising vs. decaying* is the discriminator.
+- **Welded-AC-relay detection is two latching detectors** (01 §2/§3; three
+  until v0.2.1): (a) current refuses to die during DRAIN — the sharpest one;
+  (c) V#1 still > 35 V once `WELD_WINDOW_S` (5 min) after AC-off has passed.
+  The window was sized on the assumption that the charger's output caps
+  decay only through the 110 kΩ divider (τ ~ minutes); measured 2026-09-12
+  the isolated output falls 42.5 → 21 V in 5 s, 11 V at 30 s, ~0.1 V at
+  300 s (the charger's own output load dominates), so 35 V at 5 min has a
+  huge margin — a live charger is the only way to be there. The
+  former (b), V#1 *rising* while AC is commanded off, is an advisory
+  (`EVT:VRISE:<min>:<now>`) since v0.2.1 — the caps *do* rise on their own,
+  see below.
 - **RAMP passes on voltage OR current** (amendment 2026-08-03): with K1
   already closed (AC-last-on), a part-empty pack clamps the charger output
   to battery voltage, so V#1 never reaches `RAMP_V_OK` during CC bulk
@@ -199,15 +207,25 @@ Additional rules:
   `COMPLETE_V_MIN` 41 V keeps a BMS-limited cold pack or a weak charger (low
   current at low voltage) in CHARGING. Consequence: `EVT:NOCURRENT`
   (< 0.10 A) now genuinely means "no charge path" while the robot is on.
-- **Weld detector (b) has a grace period and persistence** (v0.2.0): blind
-  for `WELD_RISE_GRACE_MS` (1.5 s) after AC-off, and the rise must persist
-  `WELD_RISE_HOLD_MS` (200 ms). Reason: after an unsequenced emergency break
-  the charger keeps running on hold-up energy and, unloaded, climbs from the
-  pack-clamped voltage to its 42.7 V set-point — five false fault-2 latches on
-  the real dock (08-23 ×3, 09-06 ×2), each within 100 ms of
-  `EVT:EMERGENCY:SWITCH`; relay switching also puts single-sample spikes on
-  A0. A welded contact holds the voltage indefinitely, so detection is only
-  delayed by ~1.7 s.
+- **Weld detector (b) — V#1 rising after AC-off — is advisory only**
+  (v0.2.1, `EVT:VRISE:<min>:<now>`, one line per climb). v0.2.0 had made it
+  blind for 1.5 s after AC-off and required a 200 ms persistence, because
+  after an unsequenced emergency break the charger keeps running on hold-up
+  energy and, unloaded, climbs from the pack-clamped voltage to its 42.7 V
+  set-point — five false fault-2 latches on the real dock (08-23 ×3, 09-06
+  ×2), each within 100 ms of `EVT:EMERGENCY:SWITCH`; relay switching also
+  puts single-sample spikes on A0. On 2026-09-12 it latched three more times
+  11–28 s after clean *sequenced* ends of charge (14:20 enable-off → IDLE,
+  17:34 and 20:25 taper → COMPLETE), K1 long open and the charger isolated,
+  charger dead minutes later: the charger restarts on its residual
+  primary-side energy and recharges its unloaded, meanwhile-decayed output
+  caps back towards the set-point — indistinguishable from a weld for a
+  rise detector at any grace length. (a) and (c) cover every real weld
+  (a welded K2 holds the set-point *for good*; a restart on stored energy
+  cannot), so the rise detector now only reports; worst-case detection
+  latency is `WELD_WINDOW_S`. The grace/persistence constants live on as
+  `VRISE_GRACE_MS` / `VRISE_HOLD_MS` so the advisory stays quiet through
+  the hold-up climb and relay clacks.
 - **"K1 failed to close" is not fully detectable on the dock alone**: it
   looks like RAMP-OK followed by ~0 A, which is also what a full battery
   looks like (taper below threshold — README open question 5). So it is an
@@ -232,8 +250,9 @@ Additional rules:
   `RAMP_A_OK` 0.30, `RAMP_TIMEOUT_S` 5 (**measured** AC-on→42 V ramp is
   < 0.2 s on the real charger, 2026-08-03 — 5 s is generous, keep),
   `K1_SETTLE_MS` 100, `DRAIN_A` 0.10, `DRAIN_TIMEOUT_S` 2,
-  `WELD_V` 35.0, `WELD_WINDOW_S` 300, `WELD_RISE_GRACE_MS` 1500,
-  `WELD_RISE_HOLD_MS` 200, `RETRY_HOLDOFF_S` 60, `NOCURRENT_S` 5,
+  `WELD_V` 35.0, `WELD_WINDOW_S` 300, `VRISE_V` 2.0, `VRISE_GRACE_MS` 1500,
+  `VRISE_HOLD_MS` 200 (advisory since v0.2.1), `RETRY_HOLDOFF_S` 60,
+  `NOCURRENT_S` 5,
   `RECLOSE_HOLDOFF_S` 1, `SELFTEST_S` 2, `WD_TIMEOUT_MS` 2000,
   `TOPUP_INTERVAL_S` 0 (off).
   (Runtime-tunable via protocol = later, only if field tests demand it.)
@@ -350,8 +369,11 @@ M5 "Field findings 2026-09-07".
   draw. The charger side sits at 42.7 V in CV while the pack reads 42.0 V —
   the robot's ideal-diode module drops ~0.7 V at 0.4 A.
 - **Fault 2 false latches after emergency switch releases** (five on real
-  hardware, never a real weld) — fixed by the detector-(b) grace/persistence
-  rule above. Faults 1 and 3 have still never fired on real hardware.
+  hardware, never a real weld) — v0.2.0 added the detector-(b)
+  grace/persistence rule; **three more on 2026-09-12, 11–28 s after
+  sequenced ends of charge**, showed the rise is the charger itself coming
+  back up on stored energy, so v0.2.1 demoted (b) to the `EVT:VRISE`
+  advisory (§4). Faults 1 and 3 have still never fired on real hardware.
 - **Flashing from the dock Pi works** (avrdude 7.1, `-c arduino -b 57600`,
   agent stopped for ~15 s; the DTR reset aborts and auto-resumes a charge).
   No bench PC needed for firmware updates any more.
