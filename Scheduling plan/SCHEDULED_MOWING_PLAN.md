@@ -14,6 +14,8 @@
 > before the run. A scheduled run **never starts unless the robot is sitting
 > in the charging dock.** Weeks repeat — the calendar shows weekdays only,
 > no dates. Block length on the calendar = estimated duration of the run.
+> **Scheduled missions must be switchable on and off** — as a whole and
+> per run (§2.1).
 
 ## 0. The one-paragraph design
 
@@ -153,6 +155,41 @@ false` (route server; applies at route load only).
 | D16 | **No `mowing_navigation` changes** in Phase 1–3 | Everything is reachable through existing params/cmd/services. Optional later: publish the `mission_cmd` result so `start_refused` carries the mission's reason text. |
 | D17 | **Skip ≠ alert storm**: skipped/failed scheduled runs raise one dismissable AlertBanner line (keyed by `last.at`) and an HA event; nothing retries on its own within the same slot | Owner sees why nothing happened, without the robot trying every minute. |
 
+### 2.1 Enabling and disabling scheduled missions (owner requirement 2026-09-13)
+
+Three switches, from coarse to fine. All three are honoured robot-side by
+`schedule_manager`; the UI only reflects them.
+
+| Level | What | Where it lives | How it is set | Effect |
+|---|---|---|---|---|
+| **Master switch** | `schedule_enabled` — "scheduled missions ON/OFF" | bridge ROS parameter, allowlisted under `mqtt_bridge_node`, persisted in `mowing_overrides.yaml` (survives reboots and bridge restarts), **default OFF after install** | Schedule page header toggle (press-again confirm when turning ON, the `DockingSettings` pattern) via `ros2/mowparams/cmd`; Settings → Docking gets the same toggle for symmetry; HA switch in Phase 4 | OFF ⇒ nothing is ever started by the clock: no pre-charge request, no `run_now` (refused `disabled`), status `enabled: false`, `next: null`. The calendar stays editable. |
+| **Per-run switch** | `enabled` on each run in `schedule.json` | the schedule file | run editor toggle; quick toggle in the block's context menu (tap-and-hold / right-click) | a disabled run is drawn striped/dimmed, never fires, never pre-charges; `runs[].next_at = 0` |
+| **Temporary hold** | `hold_until` (epoch) | `schedule_manager_state.json` (bridge-owned) | Up next card "Hold 24 h / until Monday / release"; `ros2/schedule/cmd {"action":"hold","hours":N}` / `{"action":"release"}`; HA button in Phase 4 | like OFF until the time passes, then the schedule resumes by itself; shown as "on hold until …" in the header and the Up next card |
+
+Rules:
+
+- **Switching OFF never interrupts a run that is already out.** An active
+  run continues to its normal end (mowing → return to dock → params
+  restored); the explicit **Cancel run** button (`cancel`) is the way to
+  stop it now. Rationale: an operator flipping the master switch while the
+  robot is on the lawn most likely wants "no *more* runs", and an
+  unattended stop on the lawn is worse than finishing. `pre-charging` /
+  `waiting_charge` phases *are* aborted by OFF (nothing has moved yet).
+- Turning ON does not fire a slot whose start time has already passed
+  (D13 late window still applies from the original `T0`, not from the
+  moment of enabling) — so enabling at 13:10 for a 13:00 run starts it,
+  enabling at 13:40 does not.
+- The Schedule page shows the state unmistakably: header pill
+  **"Scheduled missions: ON / OFF / ON HOLD until …"**; when OFF or on
+  hold the week grid gets a dimmed banner "Nothing will start
+  automatically" and the Up next card says why. The Mowbot page mission
+  banner is untouched (it reports the mission, not the schedule).
+- Status topic carries all three: `enabled`, `hold_until`, per-run
+  `enabled` inside `runs[]`, plus `active` so the UI can show "OFF, but
+  the current run finishes at ≈ 15:40".
+- Bridge restart / robot reboot: the master switch comes back from the
+  overrides file, the hold from the state file — no surprise re-enable.
+
 ## 3. Data contracts
 
 ### 3.1 `config/schedule.json` (written by the UI via the backend, read by the bridge)
@@ -237,7 +274,7 @@ Status field contract (the UI is written against this):
 | `hold_until` | int | epoch s, 0 = none (from `hold`) |
 | `clock_ok` | bool | NTP synchronized marker present (or RTC time plausible) |
 | `file` | `{sha1, loaded_at, error}` | `error` non-empty = last parse/validation failure, previous good schedule stays active |
-| `runs` | `[{id, day, time, next_at, last_outcome, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when disabled) |
+| `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
 | `next` | `{id, at, precharge_at} \| null` | the earliest enabled run |
 | `active` | `{id, phase, started_at, since, mission_state, mission_reason, charge_breaks} \| null` | `phase` ∈ `precharging \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning` |
 | `last` | `{id, at, outcome, reason, ended_at}` | `outcome` ∈ `completed \| partial \| skipped \| failed \| canceled \| timeout`; `reason` per the list below |
@@ -272,9 +309,9 @@ mission state + reason + freshness, undock client readiness).
 2. Compute `now` (`localtime_r`), ISO week, and for every enabled run its
    next occurrence `T0` (this week if `T0 + late_start_min > now`, else next
    week). `next` = min over runs.
-3. **Pre-charge**: if `next.at − now ≤ precharge_lead_min·60` and no
-   pre-charge was requested for this occurrence and the robot is docked
-   with fresh dock telemetry ⇒ `dock_mgr_->request_charge_full("schedule <id>")`,
+3. **Pre-charge**: if `schedule_enabled`, no hold, the run is enabled,
+   `next.at − now ≤ precharge_lead_min·60`, no pre-charge was requested
+   for this occurrence and the robot is docked with fresh dock telemetry ⇒ `dock_mgr_->request_charge_full("schedule <id>")`,
    `dock_mgr_->set_storage_suppressed(true)`, `active = {id, phase:
    precharging}`.
 4. **Fire**: `now ∈ [T0, T0 + late_start_min·60]` and not fired this week
@@ -326,6 +363,8 @@ in phase `waiting_charge` first).
 | mission `idle` with reason `operator` | run ends `canceled/operator_stop`, **no** auto-dock (D8) |
 | `now − started_at > max_run_min` | send `stop`, then `returning`, outcome `timeout` |
 | e-stop while mowing | the mission's own `safety_hold`; the run waits (max_run_min still ticking) |
+| master switch OFF / hold set while `precharging` or `waiting_charge` | abort the pre-charge (release storage suppression), outcome `skipped/disabled` |
+| master switch OFF / hold set while `mowing`, `charging` or `returning` | nothing — the run finishes normally (§2.1); only `cancel` stops it |
 | any end | `param_mgr_->restore_transient(active.restore)`, `set_storage_suppressed(false)`, clear run policy, append `history`, publish `last`, clear `active` |
 
 Bridge restart with `active` in the state file: if the mission is
@@ -464,7 +503,10 @@ also fetches the schedule (404 tolerated).
   "13:00 – 13:57 · ≈ 57 min"; LiDAR-off runs carry a small "no LiDAR"
   chip; disabled runs striped/dimmed; the active run has a pulsing outline
   and its phase text ("mowing · 34 %", "charging break 1"); quiet hours
-  shaded; a "now" line on today's column (browser clock — cosmetic only).
+  shaded; a "now" line on today's column (browser clock — cosmetic only);
+  when the master switch is OFF or a hold is active, a dimmed banner
+  across the grid: "Scheduled missions are OFF — nothing will start
+  automatically" (§2.1).
   Click/tap a block → editor. Click an empty cell → new run pre-filled
   with that day/hour. No drag-and-drop in v1 (touch-first; day/time are
   edited in the form).
@@ -494,6 +536,7 @@ also fetches the schedule (404 tolerated).
   e.g. `not_docked` → "the robot was not in the dock at 13:00").
 - **This week**: number of enabled runs, Σ estimated hours, how many need
   charge breaks, last week's outcomes from `status.runs[].last_outcome`.
+- **Header pill** "Scheduled missions: ON / OFF / ON HOLD until …" = the master switch, tappable (§2.1).
 - **Rules** (`ScheduleRules.jsx`): master toggle (`schedule_enabled` via
   `ros2/mowparams/cmd`, press-again confirm when enabling — the
   `DockingSettings` pattern) and the file `options` (saved with the
@@ -592,6 +635,13 @@ Full run last (multi-charge, needs `resume_after_charge` on).
    `previous_run_active`.
 8. Missed: stop the bridge over a slot, start it 40 min later ⇒ `missed`,
    robot stays docked.
+9. Switches (§2.1): master OFF ⇒ `next: null`, `run_now` refused
+   `disabled`, no pre-charge request at T0−lead; per-run `enabled: false`
+   ⇒ that run's `next_at = 0`, others unaffected; `hold 2h` ⇒ header "on
+   hold until …", auto-release after 2 h; master OFF during `precharging`
+   ⇒ `skipped/disabled` and storage suppression released; master OFF
+   during `mowing` ⇒ the run continues and finishes, `cancel` stops it;
+   bridge restart with OFF ⇒ stays OFF.
 
 ### 10.2 Field (motors ON, owner present)
 
