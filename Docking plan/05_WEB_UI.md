@@ -178,7 +178,9 @@ axis` (−42.3°). **2026-09-12 later:** §11.4 robot-side mission gate while do
 (owner, dock repo unit file `-r __node:=dock_mqtt_bridge`), the three
 auto-dock params are allowlisted under `param_control.nodes.mqtt_bridge_node`
 and the Settings page has a "Docking" panel (`DockingSettings.jsx`; enabling
-needs a second press). Remaining: HA docking buttons
+needs a second press; 2026-09-13 also the top-up, storage and "Resume mowing
+after charging" groups — `resume_after_charge`, `resume_at_voltage`; Dock page
++ Mission control show `resume_pending`). Remaining: HA docking buttons
 (Phase D, dock repo `homeassistant.yaml` + LXC bridge rule). A2 done 2026-09-12.
 
 ### 2.3 Robot battery (already available)

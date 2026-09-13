@@ -981,8 +981,25 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
       `{"action":"charge_full"}`; `last_full_charge_at` persisted in
       `mowing_data/config/dock_manager_state.json`; Dock page "storage hold"
       status + "Charge to full"; Settings → Docking controls. Untested live.
-- [ ] Storage mode follow-up: "full before mowing" once resume-after-charge /
-      scheduling exists (today: press Charge to full ahead of a long day).
+- [x] **Resume mowing after charging — DONE 2026-09-13** (bridge
+      `dock_manager`, params `resume_after_charge` (default off) and
+      `resume_at_voltage` (0 = wait for COMPLETE), allowlisted; Settings →
+      Docking group "Resume mowing after charging"). Only a docking the bridge
+      started for low battery arms `resume_pending` (persisted in
+      `dock_manager_state.json`); once the dock reports COMPLETE — or the pack
+      reaches `resume_at_voltage` — and it has held 10 s, the bridge runs the
+      normal sequenced undock (id `auto-resume`) and publishes the mission
+      "start", which continues from the progress saved at the stop (F27 only
+      resets a complete route). A pending resume forces a normal charge
+      (no storage hold). Cleared by manual dock/undock/cancel, the mission
+      leaving idle by other means, or the robot leaving the dock; an undock
+      failure drops it with a warning. Status fields `resume_pending`,
+      `resume_after_charge`; Dock page and Mission control show the pending
+      state. **Untested live** — needs a low-battery mission (raise
+      `mow_battery_low_voltage` temporarily) with `auto_dock_on_low_battery`
+      and `resume_after_charge` both on.
+- [ ] Storage mode follow-up: "full before mowing" once scheduling exists
+      (today: press Charge to full ahead of a long day).
 - [ ] Later / deferred: adjustable
       staging distance from the web UI (Q 1), Phase D HA docking buttons,
       charge-session stats (05 A2).
