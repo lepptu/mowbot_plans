@@ -149,7 +149,7 @@ false` (route server; applies at route load only).
 | D7 | **Start condition at T0**: pack ≥ `min_start_voltage` (default **40.5 V**, = the top-up threshold) **or** dock reports COMPLETE. Option `require_full_charge` (default off) waits for COMPLETE up to `start_window_min` (default **30**) and then starts anyway if ≥ `min_start_voltage`, else skips `battery_low` | "Top up before the run" without making a 5-minute charger hiccup cancel the mowing. |
 | D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed`, or any non-operator end ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Operator `stop` during a scheduled run ends the run without auto-dock** (the operator is present) | Unattended robot must go home. Operator stop is the one case where a human is in control. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3). |
 | D9 | **Charge breaks follow Settings → Docking `resume_after_charge`** (**owner decision 2026-09-13: option A, never forced**; recommend ON for scheduling); the UI warns when a run's estimate exceeds one charge and resume is off. Runs never start or **resume** inside quiet hours (`quiet_from`/`quiet_until`, default **21:00–07:00**, **owner decision 2026-09-13: accepted, both times adjustable in the Rules card**); a mission that is already mowing is not interrupted by quiet hours | Owner said other settings come from the Settings page. Quiet hours stop a Saturday "Full" run from resuming at 23:00 after its second charge. |
-| D10 | **Progress is reset at every scheduled start** (`/mowing/reset_progress`) unless the run has `continue_progress: true` | Weekly runs are fresh mows; without the reset, an interrupted etupiha run would leave 60 % of etupiha marked done for next week. Charge-break resumes inside a run keep the in-memory progress (reset happens only at T0). Side effect documented: a manually interrupted mission's progress is wiped by the next scheduled start. |
+| D10 | **Progress is reset at every scheduled start** (`/mowing/reset_progress`) — **owner decision 2026-09-13: always, no per-run exception, no global toggle** | Weekly runs are fresh mows; without the reset, an interrupted etupiha run would leave 60 % of etupiha marked done for next week. Charge-break resumes inside a run keep the in-memory progress (reset happens only at T0). Side effect documented: a manually interrupted mission's progress is wiped by the next scheduled start. |
 | D11 | **Run profile is applied as transient parameters** (`area_filter`, `lidar_enabled`, `perimeter_lidar_mode`) through a new `ParamManager::apply_transient()` — validated by the allowlist, sent with `set_parameters`, **not** written to `mowing_overrides.yaml`; the previous live values are remembered in the state file and restored when the run ends | The Settings page keeps showing the operator's own values; a bridge restart mid-run still restores (state file). Rejected: persisting via the normal `set` (Settings page would silently change every week). |
 | D12 | **Duration estimate** = Σ `est_time_min` × `calibration_factor` + `overhead_min` (undock, transit to the first area, docking; default **8**), plus `charge_break_min` (default **120**) for every full `mow_min_per_charge` (default **140**) of mowing beyond the first; `calibration_factor` default **1.5**, refined by the backend from completed missions in `/api/stats` (median of (mow+transit)/Σ est over the last 10 completed missions with ≥ 90 % coverage) | §1.3. The factor and endurance are recomputed on the LXC where the history lives; the robot never needs them. |
 | D13 | **Missed runs**: a run fires only within `[T0, T0 + late_start_min]` (default **30**); after that it is recorded as `skipped/missed`. Each run fires at most once per ISO week (`last_fired` per run id in the state file) | A power outage at 13:00 must not start the mower at 17:30 when the robot comes back. |
@@ -220,7 +220,6 @@ Rules:
     "wait_for_dock": true,
     "quiet_from": "21:00",
     "quiet_until": "07:00",
-    "reset_progress": true,
     "max_run_factor": 2.0
   },
   "updated_at": "2026-09-13T10:00:00Z"
@@ -236,8 +235,8 @@ as with areas):
   `/api/areas` keys, e.g. `etupiha`), `[]` = all areas ("Full"); every name
   must have a coverage entry (`/api/coverage` `area_name`); `lidar_enabled`
   bool; `perimeter_lidar_mode` ∈ `off | outermost_only | all_perimeters`;
-  `label` ≤ 40 chars; per-run optional `continue_progress` (bool, default
-  false) and `max_run_min` (int, overrides `max_run_factor`).
+  `label` ≤ 40 chars; per-run optional `max_run_min` (int, overrides
+  `max_run_factor`).
 - The bridge maps names to route ids by appending `_coverage` (the same
   convention the backend strips in `routeAreaToName()` — see the 2026-07-08
   id-namespace lesson). A name without a coverage entry at run time is
@@ -347,8 +346,8 @@ in phase `waiting_charge` first).
    `get_parameters` round trip) into `active.restore`, save the state file,
    then set the run's values (3 s service watchdog each; refusal ⇒
    `param_refused`, restore, end).
-2. Unless `continue_progress`: `param_mgr_->reset_progress(cb)` (existing
-   client, 5 s watchdog; failure ⇒ `reset_failed`, restore, end).
+2. `param_mgr_->reset_progress(cb)` — always (D10; existing client, 5 s
+   watchdog; failure ⇒ `reset_failed`, restore, end).
 3. `dock_mgr_->start_mission_from_dock("sched-<id>", cb)` — the shared
    undock-then-start sequencer (§4.3). Result `undocked` + `start` sent ⇒
    phase `mowing`; anything else ⇒ `undock_failed` / `start_refused`.
@@ -494,8 +493,8 @@ also fetches the schedule (404 tolerated).
 │ sivupiha1+sivupiha2  │ 2 need charge breaks │ [ ] Require full charge      │
 │ ≈ 5 h 35 · LiDAR off │ last week: 3 ✓ 1 ⚠   │ [x] Wait for dock ≤ 30 min   │
 │                      │                      │ Quiet hours [21:00]–[07:00]  │
-│ pre-charge 13:30     │                      │ [x] Reset progress at start  │
-│ ▸ Run now  ▸ Skip    │                      │ Late start window 30 min     │
+│ pre-charge 13:30     │                      │ Late start window [30] min   │
+│ ▸ Run now  ▸ Skip    │                      │                              │
 └──────────────────────┴──────────────────────┴──────────────────────────────┘
 ```
 
@@ -525,7 +524,7 @@ also fetches the schedule (404 tolerated).
   list; **LiDAR obstacle detection** toggle and **Perimeter LiDAR mode**
   select (`off / outermost_only / all_perimeters`) — defaults for a new
   run come from the live `ros2/mowparams/status` values; enabled toggle;
-  label; advanced: continue progress, max run minutes. A live footer shows
+  label; advanced: max run minutes. A live footer shows
   "≈ 3 h 55 mowing + 1 charge break ≈ 5 h 35 · ends ≈ 19:35" and warns on:
   overlap with another run (using estimates), end after quiet hours,
   estimate > one charge while `resume_after_charge` is off ("the run will
@@ -697,8 +696,12 @@ Full run last (multi-charge).
    both times adjustable in the Rules card (`quiet_from`/`quiet_until`,
    may wrap midnight, equal = off); applies to start **and** resume, never
    interrupts a running mission.
-5. Progress reset at every scheduled start (**yes**) — accepting that a
-   manually interrupted mission's saved progress is wiped.
+5. ~~Progress reset~~ **DECIDED 2026-09-13:** every scheduled run starts
+   from the beginning — progress is always reset at the scheduled start,
+   no per-run "continue" option and no global toggle. Accepted side
+   effect: a manually interrupted mission's saved progress is wiped by
+   the next scheduled start (charge-break resumes inside a run are
+   unaffected — the reset happens only at T0).
 6. Operator `stop` during a scheduled run: **no auto-dock** (you are
    there) — or dock anyway?
 7. `Full` = all areas with coverage, in the route server's (optimized)
