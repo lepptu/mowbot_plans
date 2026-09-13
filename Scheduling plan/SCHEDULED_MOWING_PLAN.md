@@ -144,7 +144,7 @@ false` (route server; applies at route load only).
 | D2 | **Schedule = one JSON file on the robot** (`config/schedule.json`), written only by the web UI through backend → fileserver PUT; the bridge only reads it (mtime poll) | Same path as `mow_areas.json`/`dock.json`: sha1 conflict detection, backups, version topic, editable while the bridge is down. The bridge never writes it (no write races). |
 | D3 | **Master enable is a bridge ROS parameter `schedule_enabled`** (allowlisted under `mqtt_bridge_node`, persisted in `mowing_overrides.yaml`, default **false**); per-run `enabled` and the estimate/charge options live in the file | One switch that works even when the fileserver is unreachable, and it follows the Settings/HA toggle pattern (05 Phase D). A `hold` (pause until a time) is bridge state in `schedule_manager_state.json`. |
 | D4 | **Times are Pi local time, weekday + HH:MM, weekly repeat, no dates** | Owner requirement. DST handled by `localtime_r`. No timezone field is interpreted anywhere; the file carries `"timezone": "Europe/Helsinki"` for display only. |
-| D5 | **Dock gate is hard**: a run fires only if `/dock/microswitch` is fresh **and** true (via `dock_manager`'s cache). Not docked ⇒ the run is **skipped** with reason `not_docked`, never started from the lawn | Owner requirement ("must not be able to start if not in the dock"). The mission node's own §11.4 gate is the opposite check; both stay. |
+| D5 | **Dock gate is hard**: a run fires only if `/dock/microswitch` is fresh **and** true (via `dock_manager`'s cache). Never started from the lawn. **Owner decision 2026-09-13:** option `wait_for_dock` (default **on**) — when on, a robot that is not docked at `T0` is waited for within the late-start window (`late_start_min`, phase `waiting_dock`) and the run starts the moment it is seated (all other preconditions re-checked); when off, not docked at `T0` ⇒ **skipped** immediately with reason `not_docked`. Either way the window's end ⇒ `not_docked` | Owner requirement ("must not be able to start if not in the dock"). Waiting reuses the existing late window and covers "I was test-driving it just before the slot"; the off setting is for owners who do not want a hand-docked robot to start by itself. The mission node's own §11.4 gate is the opposite check; both stay. |
 | D6 | **Pre-charge**: at `T0 − precharge_lead_min` (**owner decision 2026-09-13: default 30, adjustable in the Rules card**) the manager requests `charge_full` from `dock_manager` (one-shot: releases a storage hold, pulses a COMPLETE dock) and suppresses the storage hold until the run ends. **The scheduler never switches `topup_enabled` (or storage mode) on or off by itself** — Settings → Docking owns those; the Schedule page only shows a hint when both are off | Measured: 45–60 min from the parked band to COMPLETE (§1.3), so 30 min may start a run slightly short of full — accepted; D7's `min_start_voltage` / `require_full_charge` are the guard, and the lead is tuned from the dock statistics later. Reuses the existing `charge_full_requested_` path — no new charging logic. |
 | D7 | **Start condition at T0**: pack ≥ `min_start_voltage` (default **40.5 V**, = the top-up threshold) **or** dock reports COMPLETE. Option `require_full_charge` (default off) waits for COMPLETE up to `start_window_min` (default **30**) and then starts anyway if ≥ `min_start_voltage`, else skips `battery_low` | "Top up before the run" without making a 5-minute charger hiccup cancel the mowing. |
 | D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed`, or any non-operator end ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Operator `stop` during a scheduled run ends the run without auto-dock** (the operator is present) | Unattended robot must go home. Operator stop is the one case where a human is in control. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3). |
@@ -217,6 +217,7 @@ Rules:
     "min_start_voltage": 40.5,
     "start_window_min": 30,
     "late_start_min": 30,
+    "wait_for_dock": true,
     "quiet_from": "21:00",
     "quiet_until": "07:00",
     "reset_progress": true,
@@ -242,7 +243,7 @@ as with areas):
   id-namespace lesson). A name without a coverage entry at run time is
   dropped with a warning; if nothing is left the run is skipped
   `no_areas`.
-- Options ranges: lead 0–240 (default 30), window 0–120, late 0–120, voltage 34–42,
+- Options: `wait_for_dock` bool (default true, D5). Ranges: lead 0–240 (default 30), window 0–120, late 0–120, voltage 34–42,
   factor 1–4; quiet hours may wrap midnight; `quiet_from == quiet_until`
   = no quiet hours.
 
@@ -279,7 +280,7 @@ Status field contract (the UI is written against this):
 | `file` | `{sha1, loaded_at, error}` | `error` non-empty = last parse/validation failure, previous good schedule stays active |
 | `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
 | `next` | `{id, at, precharge_at} \| null` | the earliest enabled run |
-| `active` | `{id, phase, started_at, since, mission_state, mission_reason, charge_breaks} \| null` | `phase` ∈ `precharging \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning` |
+| `active` | `{id, phase, started_at, since, mission_state, mission_reason, charge_breaks} \| null` | `phase` ∈ `precharging \| waiting_dock \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning` |
 | `last` | `{id, at, outcome, reason, ended_at}` | `outcome` ∈ `completed \| partial \| skipped \| failed \| canceled \| timeout`; `reason` per the list below |
 | `id` | string | echo of the last command id |
 
@@ -329,7 +330,7 @@ mission state + reason + freshness, undock client readiness).
 `schedule_enabled` param true (`disabled`) → `hold_until < now` (`hold`) →
 not inside quiet hours (`quiet_hours`) → `clock_ok` (`clock_unsynced`) →
 no active run (`previous_run_active`) → dock telemetry fresh
-(`dock_offline`) → `physically_docked` (`not_docked`) → e-stop clear
+(`dock_offline`) → `physically_docked` (`not_docked`; with `wait_for_dock` on: stay in phase `waiting_dock` and re-check every tick until seated or `T0 + late_start_min`, then `not_docked`) → e-stop clear
 (`estop`) → `motors_allowed` true (`motors_off`) → `bringup` unit running
 (`bringup_down`) → `mow_mission` unit running, else start it and wait ≤ 60 s
 for a fresh `idle` (`mission_unit_down`) → mission state fresh and `idle`
@@ -366,7 +367,7 @@ in phase `waiting_charge` first).
 | mission `idle` with reason `operator` | run ends `canceled/operator_stop`, **no** auto-dock (D8) |
 | `now − started_at > max_run_min` | send `stop`, then `returning`, outcome `timeout` |
 | e-stop while mowing | the mission's own `safety_hold`; the run waits (max_run_min still ticking) |
-| master switch OFF / hold set while `precharging` or `waiting_charge` | abort the pre-charge (release storage suppression), outcome `skipped/disabled` |
+| master switch OFF / hold set while `precharging`, `waiting_dock` or `waiting_charge` | abort the pre-charge (release storage suppression), outcome `skipped/disabled` |
 | master switch OFF / hold set while `mowing`, `charging` or `returning` | nothing — the run finishes normally (§2.1); only `cancel` stops it |
 | any end | `param_mgr_->restore_transient(active.restore)`, `set_storage_suppressed(false)`, clear run policy, append `history`, publish `last`, clear `active` |
 
@@ -491,7 +492,8 @@ also fetches the schedule (404 tolerated).
 │ Up next              │ This week            │ Rules                        │
 │ Wed · 14:00          │ 4 runs · ≈ 15.3 h    │ [x] Top up before run: 30 min│
 │ sivupiha1+sivupiha2  │ 2 need charge breaks │ [ ] Require full charge      │
-│ ≈ 5 h 35 · LiDAR off │ last week: 3 ✓ 1 ⚠   │ Quiet hours 21:00–07:00      │
+│ ≈ 5 h 35 · LiDAR off │ last week: 3 ✓ 1 ⚠   │ [x] Wait for dock ≤ 30 min   │
+│                      │                      │ Quiet hours 21:00–07:00      │
 │ pre-charge 13:30     │                      │ [x] Reset progress at start  │
 │ ▸ Run now  ▸ Skip    │                      │ Late start window 30 min     │
 └──────────────────────┴──────────────────────┴──────────────────────────────┘
@@ -543,7 +545,8 @@ also fetches the schedule (404 tolerated).
 - **Rules** (`ScheduleRules.jsx`): master toggle (`schedule_enabled` via
   `ros2/mowparams/cmd`, press-again confirm when enabling — the
   `DockingSettings` pattern) and the file `options` (saved with the
-  document). Hint line when `resume_after_charge` is off and any run needs
+  document), including **"Wait for the robot to be docked"** (`wait_for_dock`,
+  D5) with the late-start window shown next to it. Hint line when `resume_after_charge` is off and any run needs
   a charge break; link to Settings → Docking.
 - **Global**: `AlertBanner` gains one dismissable line for
   `status.last.outcome ∈ {skipped, failed, timeout}` newer than the
@@ -617,7 +620,10 @@ Full run last (multi-charge, needs `resume_after_charge` on).
    across a DST boundary (set a run at 03:30 on the last Sunday of October
    → must not fire twice / skip).
 3. `run_now` with the robot **off** the dock (switch released) ⇒ `skipped/not_docked`
-   and nothing moves. With the dock Pi's zenoh down ⇒ `dock_offline`.
+   and nothing moves. Clock-fired slot with the robot off the dock:
+   `wait_for_dock` on ⇒ phase `waiting_dock`, seat the robot at T0+5 min
+   ⇒ run starts within seconds; leave it off ⇒ `not_docked` at
+   T0+`late_start_min`; `wait_for_dock` off ⇒ `not_docked` at T0. With the dock Pi's zenoh down ⇒ `dock_offline`.
    With `schedule_enabled` false ⇒ `disabled`. Inside quiet hours ⇒
    `quiet_hours`. E-stop pressed ⇒ `estop`. Motors OFF ⇒ `motors_off`.
    `mow_mission` unit stopped ⇒ the manager starts it, waits for idle,
@@ -674,9 +680,11 @@ Full run last (multi-charge, needs `resume_after_charge` on).
    Settings → Docking decides. (Measured 45–60 min to full from the parked
    band, §1.3 — tune the lead from the dock statistics after the first
    weeks.)
-2. Robot not docked at T0: **skip the run** (your requirement) — or should
-   it *wait* up to `late_start_min` for the robot to be docked (e.g. you
-   dock it by hand at 13:10)? (**wait within the late window, then skip**)
+2. ~~Robot not docked at T0~~ **DECIDED 2026-09-13:** option
+   `wait_for_dock` in the Rules card, default **on** = wait within the
+   late-start window (`late_start_min`, 30 min) and start the moment the
+   robot is seated; **off** = skip immediately with `not_docked`. Never
+   starts from the lawn either way (D5).
 3. Charge breaks: follow Settings `resume_after_charge` (**yes**) or force
    resume for scheduled runs?
 4. Quiet hours **21:00–07:00**, applying to start **and resume**, never
