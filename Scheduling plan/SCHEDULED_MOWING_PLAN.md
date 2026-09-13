@@ -666,16 +666,61 @@ every `mow_min_per_charge` of mowing. Shown with "≈" everywhere; the
 tooltip lists the components ("mowing 229 min · transit/dock 8 min · 1
 charge break ≈ 120 min · factor 1.5 from 5 missions").
 
-## 7. Home Assistant / OLED (Phase 4, optional)
+## 7. Home Assistant (Phase 4, optional) and OLED schedule page (Phase 4, decided)
 
 `homeassistant.yaml`: sensors `Next scheduled run` (`status.next` → "Wed
 14:00 sivupiha1+sivupiha2"), `Scheduled run phase` (`active.phase`),
 `Last scheduled run` (`last.outcome`/`reason`); switch `Mowing schedule`
 (`schedule_enabled` via `ha/ros2/mowparams/cmd` — needs a new `in` rule and
 the `ha/ros2/` command topic, 2026-07-08 convention); buttons "Run next
-now" / "Skip next" / "Hold 24 h" on `ha/ros2/schedule/cmd`. OLED panel: one
-line "next: Wed 14:00" in the idle screen (mowbot_oled_interface reads the
-retained status) — only if the owner wants it.
+now" / "Skip next" / "Hold 24 h" on `ha/ros2/schedule/cmd`.
+
+### 7.1 OLED panel — read-only SCHEDULE page (owner decision 2026-09-13)
+
+Repo `mowbot_oled_interface` (`mowbot_oled_ui/ui.py`): the status carousel
+`PAGES = [home, mission, mower, system]` gets a fifth page `page_schedule`
+("5/5"). **Nothing is set from the panel** — no menu entries, no actions;
+the page only shows what is scheduled and what is next. 128×64, 5 text
+rows of ≤ 21 ASCII characters (6 px font, `_title` helper), icons as
+graphics only (PIL default font is ASCII-only).
+
+```
+SCHEDULE   ON    5/5       SCHEDULE  OFF   5/5       SCHEDULE   ON    5/5
+Next We 14:00 2 areas      Next --                   RUN We: mowing  34%
+ in 21h  ~5h35  dry        schedule disabled          started 14:02  1h12
+Last Mo: OK 47min          Last Sa: skip rain        Next Sa 12:00 FULL
+Mo13 Tu12 We14 Sa12        Mo13 Tu12 We14 Sa12       Mo13 Tu12 We14 Sa12
+```
+
+- Row 1: title + master state `ON` / `OFF` / `HOLD` (from `status.enabled`
+  / `hold_until`).
+- Rows 2–3: the next run (weekday abbreviation, time, area count or
+  `FULL`, time until start, estimate `est_min` from the run object, rain
+  state `dry` / `rain` / `hold 3h` / `blocked` from `status.rain`) — or,
+  while a scheduled run is active, the active run (phase, mission
+  progress % from `/mowing/state` the panel already has, elapsed) with the
+  next run demoted to row 4.
+- Row 4: last outcome (`OK 47min`, `skip rain`, `skip not docked`,
+  `partial rain`, `cancel`, `fail dock`) with its weekday.
+- Row 5: the whole week compressed — one token per enabled run
+  `<Dd><HH>` (`Mo13 Tu12 We14 Sa12`), disabled runs omitted; more than 5
+  runs ⇒ the row scrolls every 3 s.
+- **Select** on this page opens a scrollable read-only list (reusing the
+  areas-list renderer style): one row per run `We 14:00 sivu1+sivu2`,
+  `Sa 12:00 FULL`, disabled runs suffixed `(off)`, area names truncated
+  to fit; **Back** returns.
+
+Data: subscribe the retained `ros2/schedule/status` in `mqtt_status.py`
+(second subscription next to `ros2/bridge/status`) → `state_store` keys
+`sched_*` with a 60 s expiry so a dead bridge shows `--`. Offline
+fallback (broker or bridge down): the panel reads
+`mowing_data/config/schedule.json` from the local disk (mtime-cached) and
+computes "next" itself with the same weekday/time rule, marking the row
+`(no bridge)` — the schedule is still visible, only the live state is
+not. Alert overlay: a skipped/failed scheduled run raises the existing
+toast-style alert once (`last.at` change), dismissed with Back, so the
+owner walking past the robot sees "Sched skip: rain". Estimated effort
+½ day; ships in Phase 4 together with the HA entities.
 
 ## 8. Security / deploy deltas
 
@@ -700,7 +745,7 @@ retained status) — only if the owner wants it.
 | **2 — Robot scheduler** | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
 | **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager`; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
-| **4 — HA + OLED** | §7 | bridge `homeassistant.yaml`, LXC bridge rules, OLED | 2 |
+| **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
 
 Rough size: Phase 1 ≈ 1 day (the grid is the bulk), Phase 2 ≈ 1–1.5 days
 (state machine + refactors + bench), Phase 3 ≈ ½ day, Phase 3b ≈ ½ day,
@@ -828,7 +873,12 @@ Full run last (multi-charge).
    **detected rain also stops a running mission and docks the robot**
    (`rain_stop_enabled`, scope all/scheduled). Full design in §5.1,
    decision D18, Phase 3b.
-10. Should the OLED show the next run? (**yes if cheap**)
+10. ~~OLED~~ **DECIDED 2026-09-13:** the OLED gets its **own read-only
+    SCHEDULE page** (carousel page 5/5: master state, next run, active
+    run, last outcome, compressed week; Select opens the full run list).
+    **No schedule editing from the panel.** Spec in §7.1, Phase 4.
+
+All ten questions are decided (2026-09-13); the plan is ready for Phase 1.
 
 ## 12. Deliberately not in this plan
 
