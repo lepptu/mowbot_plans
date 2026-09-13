@@ -148,7 +148,7 @@ false` (route server; applies at route load only).
 | D6 | **Pre-charge**: at `T0 − precharge_lead_min` (**owner decision 2026-09-13: default 30, adjustable in the Rules card**) the manager requests `charge_full` from `dock_manager` (one-shot: releases a storage hold, pulses a COMPLETE dock) and suppresses the storage hold until the run ends. **The scheduler never switches `topup_enabled` (or storage mode) on or off by itself** — Settings → Docking owns those; the Schedule page only shows a hint when both are off | Measured: 45–60 min from the parked band to COMPLETE (§1.3), so 30 min may start a run slightly short of full — accepted; D7's `min_start_voltage` / `require_full_charge` are the guard, and the lead is tuned from the dock statistics later. Reuses the existing `charge_full_requested_` path — no new charging logic. |
 | D7 | **Start condition at T0**: pack ≥ `min_start_voltage` (default **40.5 V**, = the top-up threshold) **or** dock reports COMPLETE. Option `require_full_charge` (default off) waits for COMPLETE up to `start_window_min` (default **30**) and then starts anyway if ≥ `min_start_voltage`, else skips `battery_low` | "Top up before the run" without making a 5-minute charger hiccup cancel the mowing. |
 | D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed`, or any non-operator end ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Operator `stop` during a scheduled run ends the run without auto-dock** (the operator is present) | Unattended robot must go home. Operator stop is the one case where a human is in control. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3). |
-| D9 | **Charge breaks follow Settings → Docking `resume_after_charge`** (recommend ON for scheduling); the UI warns when a run's estimate exceeds one charge and resume is off. Runs never start or **resume** inside quiet hours (`quiet_from`/`quiet_until`, default **21:00–07:00**); a mission that is already mowing is not interrupted by quiet hours | Owner said other settings come from the Settings page. Quiet hours stop a Saturday "Full" run from resuming at 23:00 after its second charge. |
+| D9 | **Charge breaks follow Settings → Docking `resume_after_charge`** (**owner decision 2026-09-13: option A, never forced**; recommend ON for scheduling); the UI warns when a run's estimate exceeds one charge and resume is off. Runs never start or **resume** inside quiet hours (`quiet_from`/`quiet_until`, default **21:00–07:00**); a mission that is already mowing is not interrupted by quiet hours | Owner said other settings come from the Settings page. Quiet hours stop a Saturday "Full" run from resuming at 23:00 after its second charge. |
 | D10 | **Progress is reset at every scheduled start** (`/mowing/reset_progress`) unless the run has `continue_progress: true` | Weekly runs are fresh mows; without the reset, an interrupted etupiha run would leave 60 % of etupiha marked done for next week. Charge-break resumes inside a run keep the in-memory progress (reset happens only at T0). Side effect documented: a manually interrupted mission's progress is wiped by the next scheduled start. |
 | D11 | **Run profile is applied as transient parameters** (`area_filter`, `lidar_enabled`, `perimeter_lidar_mode`) through a new `ParamManager::apply_transient()` — validated by the allowlist, sent with `set_parameters`, **not** written to `mowing_overrides.yaml`; the previous live values are remembered in the state file and restored when the run ends | The Settings page keeps showing the operator's own values; a bridge restart mid-run still restores (state file). Rejected: persisting via the normal `set` (Settings page would silently change every week). |
 | D12 | **Duration estimate** = Σ `est_time_min` × `calibration_factor` + `overhead_min` (undock, transit to the first area, docking; default **8**), plus `charge_break_min` (default **120**) for every full `mow_min_per_charge` (default **140**) of mowing beyond the first; `calibration_factor` default **1.5**, refined by the backend from completed missions in `/api/stats` (median of (mow+transit)/Σ est over the last 10 completed missions with ≥ 90 % coverage) | §1.3. The factor and endurance are recomputed on the LXC where the history lives; the robot never needs them. |
@@ -604,8 +604,9 @@ retained status) — only if the owner wants it.
 Rough size: Phase 1 ≈ 1 day (the grid is the bulk), Phase 2 ≈ 1–1.5 days
 (state machine + refactors + bench), Phase 3 ≈ ½ day, Phase 4 ≈ ½ day.
 Rollout: 1 → 2 with `schedule_enabled` **off** and `run_now` tests →
-enable one short run (etupiha) while watching → Phase 3 → the Saturday
-Full run last (multi-charge, needs `resume_after_charge` on).
+enable one short run (etupiha) while watching → Phase 3 → one supervised
+low-battery dock + resume with `resume_after_charge` on (Q3) → the Saturday
+Full run last (multi-charge).
 
 ## 10. Test plan
 
@@ -685,8 +686,13 @@ Full run last (multi-charge, needs `resume_after_charge` on).
    late-start window (`late_start_min`, 30 min) and start the moment the
    robot is seated; **off** = skip immediately with `not_docked`. Never
    starts from the lawn either way (D5).
-3. Charge breaks: follow Settings `resume_after_charge` (**yes**) or force
-   resume for scheduled runs?
+3. ~~Charge breaks~~ **DECIDED 2026-09-13 (option A):** scheduled runs
+   follow Settings → Docking `resume_after_charge` exactly, never forced;
+   the editor and the Rules card warn when a run needs a charge break and
+   resume is off. Prerequisite before the first multi-charge scheduled
+   run: enable resume in Settings and do one supervised low-battery
+   dock + resume (resume-after-charge is untested live as of
+   2026-09-13).
 4. Quiet hours **21:00–07:00**, applying to start **and resume**, never
    interrupting a running mission — OK?
 5. Progress reset at every scheduled start (**yes**) — accepting that a
