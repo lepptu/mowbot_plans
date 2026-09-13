@@ -2,7 +2,8 @@
 
 > Status: **REVISED 2026-07-31** (originally planned 2026-07-10), **field-revised
 > 2026-09-07 for firmware v0.2.0** (completion rule, weld-detector grace, rail
-> compensation — §4/§8), **2026-09-12 for v0.2.1** (weld detector (b) demoted
+> compensation — §4/§8), **2026-09-13 for v0.2.2** (`COMPLETE_S` 60 → 300 s,
+> owner decision: fuller charge, not runtime-adjustable), **2026-09-12 for v0.2.1** (weld detector (b) demoted
 > to the `EVT:VRISE` advisory — §4/§8) — brought in line
 > with the revised [01_HARDWARE.md](01_HARDWARE.md): **two-relay AC-side switching**
 > (K1 42 V DC + K2 mains pilot, strict AC-last-on / AC-first-off sequencing),
@@ -246,7 +247,7 @@ Additional rules:
 - All thresholds are `constexpr` in `charge_control.hpp`, documented in one
   block, easy to tune during bench tests (values as of v0.2.0): `COMPLETE_A`
   0.70 (was 0.15 until 2026-09-07, see above), `COMPLETE_V_MIN` 41.0,
-  `COMPLETE_S` 60, `OVERCURRENT_A` 4.0, `OVERCURRENT_MS` 50, `RAMP_V_OK` 40.0,
+  `COMPLETE_S` 300 (v0.2.2, 2026-09-13; was 60 — the charger now holds CV for 5 min after the taper crosses `COMPLETE_A`, ending the charge noticeably fuller), `OVERCURRENT_A` 4.0, `OVERCURRENT_MS` 50, `RAMP_V_OK` 40.0,
   `RAMP_A_OK` 0.30, `RAMP_TIMEOUT_S` 5 (**measured** AC-on→42 V ramp is
   < 0.2 s on the real charger, 2026-08-03 — 5 s is generous, keep),
   `K1_SETTLE_MS` 100, `DRAIN_A` 0.10, `DRAIN_TIMEOUT_S` 2,
