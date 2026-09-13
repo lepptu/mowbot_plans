@@ -718,8 +718,10 @@ Full run last (multi-charge).
    resumable, no docking. The Stop button is labelled "Stop & dock" and
    says so in its confirm text. Cancel run on the Schedule page is the
    same action.
-7. `Full` = all areas with coverage, in the route server's (optimized)
-   order — OK, or should the editor let you order areas? (**no ordering**)
+7. ~~Area ordering~~ **DECIDED 2026-09-13:** no ordering in the editor.
+   `Full` = every area that has a coverage entry (new areas join
+   automatically); multi-area runs are unordered sets; the route server's
+   segment-order optimizer decides the order.
 8. Overlapping runs are skipped (`previous_run_active`) — or queued to
    start when the previous one finishes? (**skip**)
 9. Any weather/rain input? Nothing exists today; the `hold` command is the
