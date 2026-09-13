@@ -147,7 +147,7 @@ false` (route server; applies at route load only).
 | D5 | **Dock gate is hard**: a run fires only if `/dock/microswitch` is fresh **and** true (via `dock_manager`'s cache). Never started from the lawn. **Owner decision 2026-09-13:** option `wait_for_dock` (default **on**) — when on, a robot that is not docked at `T0` is waited for within the late-start window (`late_start_min`, phase `waiting_dock`) and the run starts the moment it is seated (all other preconditions re-checked); when off, not docked at `T0` ⇒ **skipped** immediately with reason `not_docked`. Either way the window's end ⇒ `not_docked` | Owner requirement ("must not be able to start if not in the dock"). Waiting reuses the existing late window and covers "I was test-driving it just before the slot"; the off setting is for owners who do not want a hand-docked robot to start by itself. The mission node's own §11.4 gate is the opposite check; both stay. |
 | D6 | **Pre-charge**: at `T0 − precharge_lead_min` (**owner decision 2026-09-13: default 30, adjustable in the Rules card**) the manager requests `charge_full` from `dock_manager` (one-shot: releases a storage hold, pulses a COMPLETE dock) and suppresses the storage hold until the run ends. **The scheduler never switches `topup_enabled` (or storage mode) on or off by itself** — Settings → Docking owns those; the Schedule page only shows a hint when both are off | Measured: 45–60 min from the parked band to COMPLETE (§1.3), so 30 min may start a run slightly short of full — accepted; D7's `min_start_voltage` / `require_full_charge` are the guard, and the lead is tuned from the dock statistics later. Reuses the existing `charge_full_requested_` path — no new charging logic. |
 | D7 | **Start condition at T0**: pack ≥ `min_start_voltage` (default **40.5 V**, = the top-up threshold) **or** dock reports COMPLETE. Option `require_full_charge` (default off) waits for COMPLETE up to `start_window_min` (default **30**) and then starts anyway if ≥ `min_start_voltage`, else skips `battery_low` | "Top up before the run" without making a 5-minute charger hiccup cancel the mowing. |
-| D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed`, or any non-operator end ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Operator `stop` during a scheduled run ends the run without auto-dock** (the operator is present) | Unattended robot must go home. Operator stop is the one case where a human is in control. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3). |
+| D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed` **or `operator` (Stop)** ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Owner decision 2026-09-13: Stop means "end the mission and dock" everywhere** — also for manual missions whenever `auto_dock_on_mission_complete` is on (extends Docking plan 04 §6 "auto-dock on mission complete" to the operator stop); **Pause** is the "hold here, I decide" button (no docking, resumable). The Stop button must say so ("Stop & dock"). | Unattended robot must go home; Pause already covers the "stay put" case, so one meaning of Stop is easier to trust. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3) plus the small extension of the existing on-complete rule. |
 | D9 | **Charge breaks follow Settings → Docking `resume_after_charge`** (**owner decision 2026-09-13: option A, never forced**; recommend ON for scheduling); the UI warns when a run's estimate exceeds one charge and resume is off. Runs never start or **resume** inside quiet hours (`quiet_from`/`quiet_until`, default **21:00–07:00**, **owner decision 2026-09-13: accepted, both times adjustable in the Rules card**); a mission that is already mowing is not interrupted by quiet hours | Owner said other settings come from the Settings page. Quiet hours stop a Saturday "Full" run from resuming at 23:00 after its second charge. |
 | D10 | **Progress is reset at every scheduled start** (`/mowing/reset_progress`) — **owner decision 2026-09-13: always, no per-run exception, no global toggle** | Weekly runs are fresh mows; without the reset, an interrupted etupiha run would leave 60 % of etupiha marked done for next week. Charge-break resumes inside a run keep the in-memory progress (reset happens only at T0). Side effect documented: a manually interrupted mission's progress is wiped by the next scheduled start. |
 | D11 | **Run profile is applied as transient parameters** (`area_filter`, `lidar_enabled`, `perimeter_lidar_mode`) through a new `ParamManager::apply_transient()` — validated by the allowlist, sent with `set_parameters`, **not** written to `mowing_overrides.yaml`; the previous live values are remembered in the state file and restored when the run ends | The Settings page keeps showing the operator's own values; a bridge restart mid-run still restores (state file). Rejected: persisting via the normal `set` (Settings page would silently change every week). |
@@ -173,8 +173,9 @@ Rules:
 
 - **Switching OFF never interrupts a run that is already out.** An active
   run continues to its normal end (mowing → return to dock → params
-  restored); the explicit **Cancel run** button (`cancel`) is the way to
-  stop it now. Rationale: an operator flipping the master switch while the
+  restored); **Stop** on the Mowbot page (= stop & dock, D8) or the
+  **Cancel run** button on the Schedule page (same thing) is the way to
+  end it now; **Pause** holds it in place. Rationale: an operator flipping the master switch while the
   robot is on the lawn most likely wants "no *more* runs", and an
   unattended stop on the lawn is worse than finishing. `pre-charging` /
   `waiting_charge` phases *are* aborted by OFF (nothing has moved yet).
@@ -363,7 +364,7 @@ in phase `waiting_charge` first).
 | quiet hours begin while `charging` | tell `dock_manager` `clear_resume("quiet_hours")` ⇒ run ends `partial/quiet_hours` |
 | mission `idle` with reason `complete` | phase `returning` (the run policy makes `dock_manager` dock regardless of the Settings toggle); on `docked` ⇒ `completed`; dock failure ⇒ `failed/dock_failed` (robot stays on the lawn — alert) |
 | mission `idle` with reason `failed`, `tree_failure`, `nav_failure`, `drive_telemetry_lost`, … | `returning` → outcome `failed/<reason>` (dock attempted) |
-| mission `idle` with reason `operator` | run ends `canceled/operator_stop`, **no** auto-dock (D8) |
+| mission `idle` with reason `operator` (Stop) | phase `returning` — dock (D8); outcome `canceled/operator_stop` once docked |
 | `now − started_at > max_run_min` | send `stop`, then `returning`, outcome `timeout` |
 | e-stop while mowing | the mission's own `safety_hold`; the run waits (max_run_min still ticking) |
 | master switch OFF / hold set while `precharging`, `waiting_dock` or `waiting_charge` | abort the pre-charge (release storage suppression), outcome `skipped/disabled` |
@@ -378,7 +379,7 @@ lawn) ⇒ `returning` (try to dock once).
 **Commands** (`ros2/schedule/cmd`): `reload` (re-read the file now),
 `run_now {id}` (run the sequence immediately — same preconditions incl. the
 dock gate; for testing and "mow it now"), `cancel` (active run: `stop` the
-mission and dock, outcome `canceled`), `skip_next` (mark the next
+mission and dock, outcome `canceled` — identical to pressing Stop, D8), `skip_next` (mark the next
 occurrence fired), `hold {hours}` / `release` (`hold_until`).
 
 ### 4.2 `ParamManager` additions
@@ -406,9 +407,12 @@ occurrence fired), `hold {hours}` / `release` (`hold_until`).
 - `void set_storage_suppressed(bool)` — folded into `want_full` in
   `topup_tick` (like `resume_pending_` is today).
 - `void set_run_policy(bool active)` — while true: `auto_dock_on_mission_complete`
-  and `auto_dock_on_low_battery` are treated as true (D8); operator `stop`
-  (reason `operator`) does not arm an auto-dock; `on_mission_state` reads
-  the policy alongside the params.
+  and `auto_dock_on_low_battery` are treated as true (D8); `on_mission_state`
+  reads the policy alongside the params.
+- **Existing behaviour change (D8, all missions):** `on_mission_state` arms
+  the auto-dock on the `→ idle` edge with reason `complete` **or `operator`**
+  when `auto_dock_on_mission_complete` is on (today: `complete` only).
+  Update the `topics.yaml` comment and Docking plan 04 §6 at implementation.
 - Getters: `physically_docked()`, `dock_fresh()`, `dock_state()`,
   `robot_batt_v()` (+ freshness), `mission_state()`/`mission_reason()`/
   `mission_fresh()`, `estop_active()`, `undock_ready()`,
@@ -550,7 +554,11 @@ also fetches the schedule (404 tolerated).
 - **Global**: `AlertBanner` gains one dismissable line for
   `status.last.outcome ∈ {skipped, failed, timeout}` newer than the
   dismissed key; `MissionControl` shows "Started by the schedule (Wed
-  14:00)" while `docking.scheduled_run` / `status.active` is set;
+  14:00)" while `docking.scheduled_run` / `status.active` is set; the
+  **Stop button reads "Stop & dock"** whenever a stop will be followed by
+  docking (scheduled run, or `auto_dock_on_mission_complete` on) and its
+  confirm/help text says "ends the mission and returns to the dock — use
+  Pause to hold the robot where it is" (D8);
   `RobotStatusBanner` unchanged (mowing is mowing).
 - `hooks/useSchedule.js`: fetch + sha1 + PUT + estimates; subscribes
   `ros2/schedule/version` to refetch. `lib/scheduleEstimate.js`: the D12
@@ -659,8 +667,10 @@ Full run last (multi-charge).
    stay; AlertBanner silent.
 2. Same run from the clock (set it 3 min ahead): pre-charge (lead 2 min
    for the test) then start at T0 ± 5 s.
-3. Operator `stop` mid-run ⇒ `canceled/operator_stop`, robot stays put,
-   params restored.
+3. Pause mid-run ⇒ robot holds, run stays active, Resume continues.
+   Stop mid-run ⇒ mission ends, robot docks, `canceled/operator_stop`,
+   params restored. Same Stop on a manual mission with auto-dock on ⇒
+   docks too.
 4. `cancel` from the UI mid-run ⇒ mission stops, robot docks, outcome
    `canceled`.
 5. Multi-charge run (sivupiha1 + sivupiha2) with `resume_after_charge`
@@ -702,8 +712,12 @@ Full run last (multi-charge).
    effect: a manually interrupted mission's saved progress is wiped by
    the next scheduled start (charge-break resumes inside a run are
    unaffected — the reset happens only at T0).
-6. Operator `stop` during a scheduled run: **no auto-dock** (you are
-   there) — or dock anyway?
+6. ~~Operator stop~~ **DECIDED 2026-09-13:** **Stop = end the mission
+   and dock**, everywhere (scheduled runs always; manual missions when
+   `auto_dock_on_mission_complete` is on); **Pause** = hold in place,
+   resumable, no docking. The Stop button is labelled "Stop & dock" and
+   says so in its confirm text. Cancel run on the Schedule page is the
+   same action.
 7. `Full` = all areas with coverage, in the route server's (optimized)
    order — OK, or should the editor let you order areas? (**no ordering**)
 8. Overlapping runs are skipped (`previous_run_active`) — or queued to
