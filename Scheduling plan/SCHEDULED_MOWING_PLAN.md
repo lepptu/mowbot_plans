@@ -153,7 +153,7 @@ false` (route server; applies at route load only).
 | D11 | **Run profile is applied as transient parameters** (`area_filter`, `lidar_enabled`, `perimeter_lidar_mode`) through a new `ParamManager::apply_transient()` — validated by the allowlist, sent with `set_parameters`, **not** written to `mowing_overrides.yaml`; the previous live values are remembered in the state file and restored when the run ends | The Settings page keeps showing the operator's own values; a bridge restart mid-run still restores (state file). Rejected: persisting via the normal `set` (Settings page would silently change every week). |
 | D12 | **Duration estimate** = Σ `est_time_min` × `calibration_factor` + `overhead_min` (undock, transit to the first area, docking; default **8**), plus `charge_break_min` (default **120**) for every full `mow_min_per_charge` (default **140**) of mowing beyond the first; `calibration_factor` default **1.5**, refined by the backend from completed missions in `/api/stats` (median of (mow+transit)/Σ est over the last 10 completed missions with ≥ 90 % coverage) | §1.3. The factor and endurance are recomputed on the LXC where the history lives; the robot never needs them. |
 | D13 | **Missed runs**: a run fires only within `[T0, T0 + late_start_min]` (default **30**); after that it is recorded as `skipped/missed`. Each run fires at most once per ISO week (`last_fired` per run id in the state file) | A power outage at 13:00 must not start the mower at 17:30 when the robot comes back. |
-| D14 | **Overlaps**: while a scheduled run is active (any phase, including charge breaks), a later slot is skipped with `previous_run_active`; the editor warns about overlaps using the estimates | Simple and predictable; the estimate tells the owner when to place the next run. |
+| D14 | **Overlaps**: while a scheduled run is active (any phase, including charge breaks), a later slot is skipped with `previous_run_active` (**owner decision 2026-09-13: skip, no queue**); the late-start window still applies, so a slot whose start falls within `late_start_min` after the previous run ends does start; the editor warns about overlaps using the estimates | Simple and predictable; the estimate tells the owner when to place the next run. |
 | D15 | **Unattended limits**: `max_run_min` per run (default = estimate × 2, floor 120) — on expiry the manager sends `stop` and docks, outcome `timeout`; a `start` that does not leave `idle` within 15 s ⇒ `start_refused`; undock failure ⇒ `undock_failed`, run ends docked | Every scheduled run must terminate on its own. |
 | D16 | **No `mowing_navigation` changes** in Phase 1–3 | Everything is reachable through existing params/cmd/services. Optional later: publish the `mission_cmd` result so `start_refused` carries the mission's reason text. |
 | D17 | **Skip ≠ alert storm**: skipped/failed scheduled runs raise one dismissable AlertBanner line (keyed by `last.at`) and an HA event; nothing retries on its own within the same slot | Owner sees why nothing happened, without the robot trying every minute. |
@@ -722,8 +722,10 @@ Full run last (multi-charge).
    `Full` = every area that has a coverage entry (new areas join
    automatically); multi-area runs are unordered sets; the route server's
    segment-order optimizer decides the order.
-8. Overlapping runs are skipped (`previous_run_active`) — or queued to
-   start when the previous one finishes? (**skip**)
+8. ~~Overlaps~~ **DECIDED 2026-09-13:** skip (`previous_run_active`), no
+   queueing. Bounded catch-up comes free from the late-start window: if
+   the previous run ends within `late_start_min` of the next slot, the
+   next run starts. Two areas on one day = one run with both areas.
 9. Any weather/rain input? Nothing exists today; the `hold` command is the
    hook (HA automation → `ha/ros2/schedule/cmd {"action":"hold","hours":6}`).
    (**later, Phase 4**)
