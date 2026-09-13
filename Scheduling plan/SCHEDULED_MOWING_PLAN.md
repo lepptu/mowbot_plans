@@ -121,8 +121,11 @@ Charge times from `/api/dock/sessions` (fw 0.2.x, 1.6–1.7 A):
 | ~35.9 V (after a low-battery stop) | COMPLETE | not yet measured — extrapolated ≈ 120 min | ≈ 2.8 |
 
 ⇒ A parked robot with top-up on (never below 40.5 V) is full again within
-**45 min**; with storage mode on (39.6–40.6 V band) allow **60 min**. A
-charge break inside a run costs ≈ **2 h**.
+**45 min**; with storage mode on (39.6–40.6 V band) allow **60 min**. The
+owner chose a **30 min** default lead (adjustable) — the run then starts
+with the pack still charging but above `min_start_voltage`; raise the lead
+once the dock statistics show how far short it falls. A charge break
+inside a run costs ≈ **2 h**.
 
 ### 1.4 Current live settings that matter (2026-09-13, `mowing_overrides.yaml`)
 
@@ -142,7 +145,7 @@ false` (route server; applies at route load only).
 | D3 | **Master enable is a bridge ROS parameter `schedule_enabled`** (allowlisted under `mqtt_bridge_node`, persisted in `mowing_overrides.yaml`, default **false**); per-run `enabled` and the estimate/charge options live in the file | One switch that works even when the fileserver is unreachable, and it follows the Settings/HA toggle pattern (05 Phase D). A `hold` (pause until a time) is bridge state in `schedule_manager_state.json`. |
 | D4 | **Times are Pi local time, weekday + HH:MM, weekly repeat, no dates** | Owner requirement. DST handled by `localtime_r`. No timezone field is interpreted anywhere; the file carries `"timezone": "Europe/Helsinki"` for display only. |
 | D5 | **Dock gate is hard**: a run fires only if `/dock/microswitch` is fresh **and** true (via `dock_manager`'s cache). Not docked ⇒ the run is **skipped** with reason `not_docked`, never started from the lawn | Owner requirement ("must not be able to start if not in the dock"). The mission node's own §11.4 gate is the opposite check; both stay. |
-| D6 | **Pre-charge**: at `T0 − precharge_lead_min` (default **60**) the manager requests `charge_full` from `dock_manager` (one-shot: releases a storage hold, pulses a COMPLETE dock) and suppresses the storage hold until the run ends | Measured: 45–60 min from the parked band to COMPLETE (§1.3). Reuses the existing `charge_full_requested_` path — no new charging logic. |
+| D6 | **Pre-charge**: at `T0 − precharge_lead_min` (**owner decision 2026-09-13: default 30, adjustable in the Rules card**) the manager requests `charge_full` from `dock_manager` (one-shot: releases a storage hold, pulses a COMPLETE dock) and suppresses the storage hold until the run ends. **The scheduler never switches `topup_enabled` (or storage mode) on or off by itself** — Settings → Docking owns those; the Schedule page only shows a hint when both are off | Measured: 45–60 min from the parked band to COMPLETE (§1.3), so 30 min may start a run slightly short of full — accepted; D7's `min_start_voltage` / `require_full_charge` are the guard, and the lead is tuned from the dock statistics later. Reuses the existing `charge_full_requested_` path — no new charging logic. |
 | D7 | **Start condition at T0**: pack ≥ `min_start_voltage` (default **40.5 V**, = the top-up threshold) **or** dock reports COMPLETE. Option `require_full_charge` (default off) waits for COMPLETE up to `start_window_min` (default **30**) and then starts anyway if ≥ `min_start_voltage`, else skips `battery_low` | "Top up before the run" without making a 5-minute charger hiccup cancel the mowing. |
 | D8 | **Return to dock is forced for scheduled runs**: mission `idle` with reason `complete`, `failed`, or any non-operator end ⇒ dock, regardless of the Settings toggle `auto_dock_on_mission_complete`. Low battery ⇒ stop + dock is likewise forced. **Operator `stop` during a scheduled run ends the run without auto-dock** (the operator is present) | Unattended robot must go home. Operator stop is the one case where a human is in control. Implemented as a "run policy" flag `dock_manager` honours while a scheduled run is active (§4.3). |
 | D9 | **Charge breaks follow Settings → Docking `resume_after_charge`** (recommend ON for scheduling); the UI warns when a run's estimate exceeds one charge and resume is off. Runs never start or **resume** inside quiet hours (`quiet_from`/`quiet_until`, default **21:00–07:00**); a mission that is already mowing is not interrupted by quiet hours | Owner said other settings come from the Settings page. Quiet hours stop a Saturday "Full" run from resuming at 23:00 after its second charge. |
@@ -209,7 +212,7 @@ Rules:
       "lidar_enabled": true,  "perimeter_lidar_mode": "outermost_only", "enabled": true, "label": "Full mow" }
   ],
   "options": {
-    "precharge_lead_min": 60,
+    "precharge_lead_min": 30,
     "require_full_charge": false,
     "min_start_voltage": 40.5,
     "start_window_min": 30,
@@ -239,7 +242,7 @@ as with areas):
   id-namespace lesson). A name without a coverage entry at run time is
   dropped with a warning; if nothing is left the run is skipped
   `no_areas`.
-- Options ranges: lead 0–240, window 0–120, late 0–120, voltage 34–42,
+- Options ranges: lead 0–240 (default 30), window 0–120, late 0–120, voltage 34–42,
   factor 1–4; quiet hours may wrap midnight; `quiet_from == quiet_until`
   = no quiet hours.
 
@@ -486,10 +489,10 @@ also fetches the schedule (404 tolerated).
 │ 21:00  │────────┴────────┴────── quiet hours ───────┴────────┴─────────────│
 ├──────────────────────┬──────────────────────┬──────────────────────────────┤
 │ Up next              │ This week            │ Rules                        │
-│ Wed · 14:00          │ 4 runs · ≈ 15.3 h    │ [x] Top up before run: 60 min│
+│ Wed · 14:00          │ 4 runs · ≈ 15.3 h    │ [x] Top up before run: 30 min│
 │ sivupiha1+sivupiha2  │ 2 need charge breaks │ [ ] Require full charge      │
 │ ≈ 5 h 35 · LiDAR off │ last week: 3 ✓ 1 ⚠   │ Quiet hours 21:00–07:00      │
-│ pre-charge 13:00     │                      │ [x] Reset progress at start  │
+│ pre-charge 13:30     │                      │ [x] Reset progress at start  │
 │ ▸ Run now  ▸ Skip    │                      │ Late start window 30 min     │
 └──────────────────────┴──────────────────────┴──────────────────────────────┘
 ```
@@ -665,9 +668,12 @@ Full run last (multi-charge, needs `resume_after_charge` on).
 
 ## 11. Open questions for the owner (proposed defaults in bold)
 
-1. Pre-charge lead: **60 min** (45 suffices with top-up on, storage mode
-   needs ~60). Should the scheduler also force `topup_enabled` on?
-   (**no** — Settings decides)
+1. ~~Pre-charge lead~~ **DECIDED 2026-09-13:** lead default **30 min**,
+   adjustable in the Rules card (`options.precharge_lead_min`); the
+   scheduler **never** switches top-up (or storage mode) on by itself —
+   Settings → Docking decides. (Measured 45–60 min to full from the parked
+   band, §1.3 — tune the lead from the dock statistics after the first
+   weeks.)
 2. Robot not docked at T0: **skip the run** (your requirement) — or should
    it *wait* up to `late_start_min` for the robot to be docked (e.g. you
    dock it by hand at 13:10)? (**wait within the late window, then skip**)
