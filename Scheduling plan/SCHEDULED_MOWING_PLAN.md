@@ -159,8 +159,8 @@ false` (route server; applies at route load only).
 | D14 | **Overlaps**: while a scheduled run is active (any phase, including charge breaks), a later slot is skipped with `previous_run_active` (**owner decision 2026-09-13: skip, no queue**); the late-start window still applies, so a slot whose start falls within `late_start_min` after the previous run ends does start; the editor warns about overlaps using the estimates | Simple and predictable; the estimate tells the owner when to place the next run. |
 | D15 | **Unattended limits**: `max_run_min` per run (default = estimate × 2, floor 120) — on expiry the manager sends `stop` and docks, outcome `timeout`; a `start` that does not leave `idle` within 15 s ⇒ `start_refused`; undock failure ⇒ `undock_failed`, run ends docked | Every scheduled run must terminate on its own. |
 | D16 | **No `mowing_navigation` changes** in Phase 1–3 | Everything is reachable through existing params/cmd/services. Optional later: publish the `mission_cmd` result so `start_refused` carries the mission's reason text. |
-| D18 | **Rain gate from internet weather, computed on the LXC** (owner decision 2026-09-13): the backend polls FMI open data (measured precipitation, nearest station) and Open-Meteo (forecast) and publishes one retained `ros2/weather/rain` state; `schedule_manager` refuses a start while it is raining, when it has rained within `rain_hold_hours`, or when the forecast for the run window exceeds `rain_forecast_mm`. **Detected rain also stops a running mission: `stop` + dock** (owner decision 2026-09-13; `rain_stop_enabled`, default on, scope `all` missions or `scheduled` only). All thresholds adjustable in the Rules card. Stale data (> `rain_stale_min`) is ignored with a warning unless `rain_strict` | No rain sensor exists; the LXC already has the HTTP client, the broker connection and internet access (verified 2026-09-13: both services answer from the LXC, no key needed). The bridge does the "last X hours" arithmetic from a timestamp so a stuck publisher cannot hold the schedule forever. Home Assistant deliberately not in the path. |
 | D17 | **Skip ≠ alert storm**: skipped/failed scheduled runs raise one dismissable AlertBanner line (keyed by `last.at`) and an HA event; nothing retries on its own within the same slot | Owner sees why nothing happened, without the robot trying every minute. |
+| D18 | **Rain gate from internet weather, computed on the LXC** (owner decision 2026-09-13): the backend polls FMI open data (measured precipitation, nearest station) and Open-Meteo (forecast) and publishes one retained `ros2/weather/rain` state; `schedule_manager` refuses a start while it is raining, when it has rained within `rain_hold_hours`, or when the forecast for the run window exceeds `rain_forecast_mm`. **Detected rain also stops a running mission: `stop` + dock** (owner decision 2026-09-13; `rain_stop_enabled`, default on, scope `all` missions or `scheduled` only). All thresholds adjustable in the Rules card. Stale data (> `rain_stale_min`) is ignored with a warning unless `rain_strict` | No rain sensor exists; the LXC already has the HTTP client, the broker connection and internet access (verified 2026-09-13: both services answer from the LXC, no key needed). The bridge does the "last X hours" arithmetic from a timestamp so a stuck publisher cannot hold the schedule forever. Home Assistant deliberately not in the path. |
 
 ### 2.1 Enabling and disabling scheduled missions (owner requirement 2026-09-13)
 
@@ -214,7 +214,8 @@ Rules:
     { "id": "wed-sivu",     "day": "wed", "time": "14:00", "areas": ["sivupiha1", "sivupiha2"],
       "lidar_enabled": false, "perimeter_lidar_mode": "off",            "enabled": true, "label": "" },
     { "id": "sat-full",     "day": "sat", "time": "12:00", "areas": [],
-      "lidar_enabled": true,  "perimeter_lidar_mode": "outermost_only", "enabled": true, "label": "Full mow" }
+      "lidar_enabled": true,  "perimeter_lidar_mode": "outermost_only", "enabled": true, "label": "Full mow",
+      "est_min": 530 }
   ],
   "options": {
     "precharge_lead_min": 30,
@@ -249,7 +250,11 @@ as with areas):
   must have a coverage entry (`/api/coverage` `area_name`); `lidar_enabled`
   bool; `perimeter_lidar_mode` ∈ `off | outermost_only | all_perimeters`;
   `label` ≤ 40 chars; per-run optional `max_run_min` (int, overrides
-  `max_run_factor`).
+  `max_run_factor`); `est_min` (int, written by the UI at save time = the
+  run's total estimate incl. charge breaks; advisory — the bridge uses it
+  only for the rain-forecast window and `max_run_factor`, the OLED for
+  display; it goes stale when coverage is regenerated until the run is
+  re-saved, which the UI flags with the existing coverage `stale` badge).
 - The bridge maps names to route ids by appending `_coverage` (the same
   convention the backend strips in `routeAreaToName()` — see the 2026-07-08
   id-namespace lesson). A name without a coverage entry at run time is
@@ -279,7 +284,7 @@ mission record; this is only for the status topic and the calendar's
 
 | Topic | Dir | Payload |
 |---|---|---|
-| `ros2/schedule/status` | robot → UI, **retained**, republished on change + every 30 s | see below |
+| `ros2/schedule/status` | robot → UI, **retained**, republished on change + every 60 s | see below |
 | `ros2/schedule/cmd` | UI/HA → robot, never retained | `{"action": "reload" \| "run_now" \| "cancel" \| "skip_next" \| "hold" \| "release", "id"?, "hours"?}` |
 | `ros2/schedule/version` | version_watcher, retained | `{sha1, mtime}` — backend refetch trigger (same as `ros2/dock/pose_version`) |
 | `ros2/weather/rain` | LXC backend → robot + UI, **retained**, every poll (10 min) | `{raining, last_rain_at, mm_1h, mm_24h, forecast: {hours, mm, prob_max}, sources: {fmi: {station, at}, open_meteo: {at}}, updated_at}` (§5.1) |
@@ -343,7 +348,7 @@ mission state + reason + freshness, undock client readiness).
    reason}`, alert. (`T0 + late_start_min` passed without firing ⇒
    `missed`.)
 5. **Active run supervision** (§4.1.3).
-6. Publish status on change, at least every 30 s.
+6. Publish status on change, at least every 60 s.
 
 **4.1.1 Preconditions at T0 (all must hold; first failing reason wins):**
 `schedule_enabled` param true (`disabled`) → `hold_until < now` (`hold`) →
@@ -389,8 +394,8 @@ in phase `waiting_charge` first).
 | `now − started_at > max_run_min` | send `stop`, then `returning`, outcome `timeout` |
 | e-stop while mowing | the mission's own `safety_hold`; the run waits (max_run_min still ticking) |
 | master switch OFF / hold set while `precharging`, `waiting_dock` or `waiting_charge` | abort the pre-charge (release storage suppression), outcome `skipped/disabled` |
-| master switch OFF / hold set while `mowing`, `charging` or `returning` | nothing — the run finishes normally (§2.1); only `cancel` stops it |
-| any end | `param_mgr_->restore_transient(active.restore)`, `set_storage_suppressed(false)`, clear run policy, append `history`, publish `last`, clear `active` |
+| master switch OFF / hold set while `mowing`, `charging` or `returning` | nothing — the run finishes normally (§2.1); Stop / `cancel` end it early |
+| any end | `param_mgr_->restore_transient(active.restore)`, `set_storage_suppressed(false)` (also clears a still-pending `charge_full_requested_` so the next docking follows the normal storage/top-up policy), clear run policy, append `history`, publish `last`, clear `active` |
 
 Bridge restart with `active` in the state file: if the mission is
 `running/paused` ⇒ re-attach as `mowing`; if docked + idle ⇒ finish
@@ -399,7 +404,8 @@ lawn) ⇒ `returning` (try to dock once).
 
 **Commands** (`ros2/schedule/cmd`): `reload` (re-read the file now),
 `run_now {id}` (run the sequence immediately — same preconditions incl. the
-dock gate; for testing and "mow it now"), `cancel` (active run: `stop` the
+dock gate, but it never waits: not docked ⇒ refused `not_docked` at once;
+for testing and "mow it now"; quiet-hours/rain handling per §11 Q12), `cancel` (active run: `stop` the
 mission and dock, outcome `canceled` — identical to pressing Stop, D8), `skip_next` (mark the next
 occurrence fired), `hold {hours}` / `release` (`hold_until`).
 
@@ -731,6 +737,15 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
   `mowbot-mqtt-bridge.service`; fileserver + version watcher restarts.
 - LXC: rsync `server_lxc/` (exclusions per memory), `npm run build` as
   `mowbot`, restart `mowbot-backend.service`; users hard-refresh.
+- **Pi footprint** (owner constraint: the robot Pi stays as light as it is):
+  everything new on the Pi is inside existing processes — one 1 Hz tick in
+  the bridge (share `dock_manager`'s timer rather than adding one), a file
+  stat every 5 s, one retained MQTT subscription (`ros2/weather/rain`, one
+  message per 10 min), a status publish on change and at most every **60 s**
+  (not 30), one extra fileserver path, one extra watcher file, one OLED
+  page rendered only while shown. Estimates, calibration, weather polling,
+  rain history and the editor live on the LXC / in the browser; the Pi never
+  talks to the internet. Expected cost well under 0.1 % of a core.
 - The `webui` credential is semi-public: `run_now` obeys every robot-side
   interlock, `cancel` only stops/docks, and the schedule file goes through
   the token-protected fileserver PUT — nothing new becomes possible for a
@@ -743,7 +758,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 | **0 — Decisions** | Owner answers §11 (defaults proposed) | plan | — |
 | **1 — Schedule file + page (no execution)** | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
 | **2 — Robot scheduler** | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
-| **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager`; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
+| **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
 | **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
 
@@ -878,7 +893,35 @@ Full run last (multi-charge).
     run, last outcome, compressed week; Select opens the full run list).
     **No schedule editing from the panel.** Spec in §7.1, Phase 4.
 
-All ten questions are decided (2026-09-13); the plan is ready for Phase 1.
+All ten questions are decided (2026-09-13).
+
+### 11.1 New questions from the 2026-09-13 consistency review (open)
+
+11. **Rain stop on a manual mission when auto-dock-on-complete is off.**
+    D8 makes a Stop dock only when `auto_dock_on_mission_complete` is on;
+    a rain stop (`rain_stop_scope: all`) on a manual mission would then
+    leave the robot standing in the rain. Proposal: **a rain stop always
+    docks** — the bridge arms the dock itself for this case regardless of
+    the toggle (that is the point of stopping for rain). Related: the rain
+    stop should work **even when the schedule master switch is OFF**
+    (`rain_gate_enabled`/`rain_stop_*` live in the file and are read
+    regardless; the master switch only governs *starting* runs) —
+    proposal: **yes**.
+12. **Run now vs quiet hours and the rain gate.** `run_now` obeys every
+    precondition today. Proposal: obey the dock, battery and rain gates,
+    but **ignore quiet hours** (the owner is present and asking); if you
+    want to mow in the rain, the normal Start button is the override.
+13. **`mow_mission` unit stopped at T0.** §4.1.1 currently *starts* the
+    unit automatically. A unit the owner stopped on purpose (maintenance,
+    a test) would come back at 13:00. Proposal: **skip with
+    `mission_unit_down`** instead of auto-starting — the unit boot-starts
+    and self-restarts on crashes anyway, so a stopped unit is a deliberate
+    signal. (`bringup` down already skips.)
+14. **FMI station.** `place=lappeenranta` in §5.1 resolves to whatever
+    station FMI picks for the name. The datum (61.2806 N, 28.8276 E) is
+    near Joutseno/Saimaa — the owner should choose the nearest observation
+    station (FMI `fmisid`, e.g. Lappeenranta airport vs. Joutseno) as the
+    backend setting `WEATHER_FMI_STATION`; the plan cannot decide this.
 
 ## 12. Deliberately not in this plan
 
