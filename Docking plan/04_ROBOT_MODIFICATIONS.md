@@ -920,7 +920,9 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
       undock start, periodically while docked.
 - [ ] Then §8.2: ten clean dockings, off-axis starts, undock cold check
       (2026-09-12 so far: 5 undocks 5/5; dockings dock11–13, dock15 ✓,
-      dock14 ✗ before the line-follow fix).
+      dock14 ✗ before the line-follow fix). **Owner 2026-09-13: proven
+      further through real mowing missions from now on, no separate
+      drill.**
 - [ ] Nice-to-have: keep the lidar on during docking sessions (F29 idle
       power-off adds a power-on wait to every command).
 
@@ -951,15 +953,27 @@ side) ✓ — drift +5.2° at 0.47 m corrected to +0.7° at 0.36 m. Score:
 
 ### 11.6 Field (§8.2) and P4
 
+> **Network 2026-09-12 → fixed 2026-09-13.** Evening of 09-12 every dock
+> command (manual and the auto-dock after a mission) was refused with
+> `dock_offline`: the robot Pi could not reach the dock Pi at all (100 %
+> ping loss) while both reached the wired LXC, so the dock's zenoh
+> federation into the robot router was dead although the web UI still
+> showed the dock live over MQTT. Cause was on the WiFi router (client
+> isolation / bridging between wireless clients); **owner changed router
+> settings 2026-09-13 and the next mission auto-docked.** Fallback idea
+> kept for later, not built: robot bridge takes dock telemetry from the
+> LXC broker when the direct feed goes stale.
+
 - [ ] Park + "Save dock at robot position" + first autonomous dock from
       3 m, 10/10 with charge current confirmed; misalignment drill —
       if lateral misses are consistent, **shorten `staging_x_offset`** first.
 - [ ] Dock from several yard corners; undock → 2.0 m out, dock cold first.
 - [ ] E-stop mid-dock; WiFi-off-at-contact (§4.4 cosmetic mismatch readable
       in UI); dock relocation test.
-- [ ] Enable `auto_dock_on_mission_complete`, then
-      `auto_dock_on_low_battery` (temporarily raise
-      `mow_battery_low_voltage`), one at a time.
+- [x] Enable `auto_dock_on_mission_complete` — **2026-09-13: first real
+      mission completed and the robot docked by itself**; monitored on
+      future missions. `auto_dock_on_low_battery` still to be enabled
+      (temporarily raise `mow_battery_low_voltage` to try it).
 - [x] (2026-09-12) Automatic top-up while parked (Q 3) — bridge params + Settings.
 - [x] (2026-09-12, OFF by default) Storage mode: hold ~80 % while parked
       (`storage_low_v` 39.6 / `storage_high_v` 40.6 band on the top-up loop),
