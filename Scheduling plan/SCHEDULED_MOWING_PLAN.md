@@ -159,7 +159,7 @@ false` (route server; applies at route load only).
 | D14 | **Overlaps**: while a scheduled run is active (any phase, including charge breaks), a later slot is skipped with `previous_run_active` (**owner decision 2026-09-13: skip, no queue**); the late-start window still applies, so a slot whose start falls within `late_start_min` after the previous run ends does start; the editor warns about overlaps using the estimates | Simple and predictable; the estimate tells the owner when to place the next run. |
 | D15 | **Unattended limits**: `max_run_min` per run (default = estimate × 2, floor 120) — on expiry the manager sends `stop` and docks, outcome `timeout`; a `start` that does not leave `idle` within 15 s ⇒ `start_refused`; undock failure ⇒ `undock_failed`, run ends docked | Every scheduled run must terminate on its own. |
 | D16 | **No `mowing_navigation` changes** in Phase 1–3 | Everything is reachable through existing params/cmd/services. Optional later: publish the `mission_cmd` result so `start_refused` carries the mission's reason text. |
-| D18 | **Rain gate from internet weather, computed on the LXC** (owner decision 2026-09-13): the backend polls FMI open data (measured precipitation, nearest station) and Open-Meteo (forecast) and publishes one retained `ros2/weather/rain` state; `schedule_manager` refuses a start while it is raining, when it has rained within `rain_hold_hours`, or when the forecast for the run window exceeds `rain_forecast_mm`. All thresholds adjustable in the Rules card. Stale data (> `rain_stale_min`) is ignored with a warning unless `rain_strict` | No rain sensor exists; the LXC already has the HTTP client, the broker connection and internet access (verified 2026-09-13: both services answer from the LXC, no key needed). The bridge does the "last X hours" arithmetic from a timestamp so a stuck publisher cannot hold the schedule forever. Home Assistant deliberately not in the path. |
+| D18 | **Rain gate from internet weather, computed on the LXC** (owner decision 2026-09-13): the backend polls FMI open data (measured precipitation, nearest station) and Open-Meteo (forecast) and publishes one retained `ros2/weather/rain` state; `schedule_manager` refuses a start while it is raining, when it has rained within `rain_hold_hours`, or when the forecast for the run window exceeds `rain_forecast_mm`. **Detected rain also stops a running mission: `stop` + dock** (owner decision 2026-09-13; `rain_stop_enabled`, default on, scope `all` missions or `scheduled` only). All thresholds adjustable in the Rules card. Stale data (> `rain_stale_min`) is ignored with a warning unless `rain_strict` | No rain sensor exists; the LXC already has the HTTP client, the broker connection and internet access (verified 2026-09-13: both services answer from the LXC, no key needed). The bridge does the "last X hours" arithmetic from a timestamp so a stuck publisher cannot hold the schedule forever. Home Assistant deliberately not in the path. |
 | D17 | **Skip ≠ alert storm**: skipped/failed scheduled runs raise one dismissable AlertBanner line (keyed by `last.at`) and an HA event; nothing retries on its own within the same slot | Owner sees why nothing happened, without the robot trying every minute. |
 
 ### 2.1 Enabling and disabling scheduled missions (owner requirement 2026-09-13)
@@ -230,6 +230,9 @@ Rules:
     "rain_forecast_mm": 1.0,
     "rain_stale_min": 90,
     "rain_strict": false,
+    "rain_stop_enabled": true,
+    "rain_stop_scope": "all",
+    "rain_stop_confirm_polls": 1,
     "max_run_factor": 2.0
   },
   "updated_at": "2026-09-13T10:00:00Z"
@@ -252,7 +255,7 @@ as with areas):
   id-namespace lesson). A name without a coverage entry at run time is
   dropped with a warning; if nothing is left the run is skipped
   `no_areas`.
-- Rain options (D18, §5.1): `rain_gate_enabled` bool (default true), `rain_hold_hours` 0–48 (default 6), `rain_forecast_mm` 0–20 mm over the estimated run window (default 1.0; 0 = ignore the forecast), `rain_stale_min` 15–720 (default 90), `rain_strict` bool (default false).
+- Rain options (D18, §5.1): `rain_gate_enabled` bool (default true), `rain_hold_hours` 0–48 (default 6), `rain_forecast_mm` 0–20 mm over the estimated run window (default 1.0; 0 = ignore the forecast), `rain_stale_min` 15–720 (default 90), `rain_strict` bool (default false), `rain_stop_enabled` bool (default true), `rain_stop_scope` ∈ `all | scheduled` (default `all`), `rain_stop_confirm_polls` 1–6 (default 1 = stop on the first `raining: true`; 2 = two consecutive polls ≈ 20 min, filters a passing shower).
 - Options: `wait_for_dock` bool (default true, D5). Ranges: lead 0–240 (default 30), window 0–120, late 0–120, voltage 34–42,
   factor 1–4; quiet hours may wrap midnight; `quiet_from == quiet_until`
   = no quiet hours.
@@ -301,7 +304,7 @@ Skip / end reasons (goto/dock convention, plain strings): `disabled`,
 `mission_state_unknown`, `mission_unit_down`, `bringup_down`, `estop`,
 `motors_off`, `nav2_unavailable`, `battery_low`, `previous_run_active`,
 `missed`, `clock_unsynced`, `no_areas`, `rain`, `rain_recent`,
-`rain_forecast`, `rain_data_stale`, `param_refused`,
+`rain_forecast`, `rain_data_stale`, `rain_stop`, `param_refused`,
 `reset_failed`, `undock_failed`, `start_refused`, `operator_stop`,
 `mission_failed`, `dock_failed`, `timeout`, `bridge_restart`.
 
@@ -377,6 +380,8 @@ in phase `waiting_charge` first).
 |---|---|
 | mission `running`/`paused` | phase `mowing`; count `charge_breaks` on `paused/battery` → `idle` edges |
 | `dock_manager` reports `resume_pending` and robot docked | phase `charging` (the existing low-battery auto-dock + resume-after-charge chain is doing the work; forced on by the run policy §4.3) |
+| `raining` on fresh data while `mowing` (per `rain_stop_confirm_polls`) | send `stop` → phase `returning` → outcome `partial/rain_stop` (§5.1) |
+| `raining` while `charging` | `clear_resume("rain")` → outcome `partial/rain_stop`, robot stays docked |
 | quiet hours begin while `charging` | tell `dock_manager` `clear_resume("quiet_hours")` ⇒ run ends `partial/quiet_hours` |
 | mission `idle` with reason `complete` | phase `returning` (the run policy makes `dock_manager` dock regardless of the Settings toggle); on `docked` ⇒ `completed`; dock failure ⇒ `failed/dock_failed` (robot stays on the lawn — alert) |
 | mission `idle` with reason `failed`, `tree_failure`, `nav_failure`, `drive_telemetry_lost`, … | `returning` → outcome `failed/<reason>` (dock attempted) |
@@ -519,15 +524,29 @@ the run object by the UI at save time — advisory, used only here) ≥
 `rain_forecast_mm` ⇒ `rain_forecast`. Pre-charge is **not** suppressed by
 rain (cheap, and the shower may pass). The gate is re-evaluated every tick
 during the late-start window, so a run can still start once the hold has
-expired within the window. A run already mowing is **not** stopped by
-rain (the owner may add that later — it would be `stop` + dock like the
-timeout; the mission itself has no wet-grass detection).
+expired within the window.
+
+**Rain stop (owner decision 2026-09-13):** when `raining` turns true on
+fresh data (for `rain_stop_confirm_polls` consecutive polls) while a
+mission is `running` or `paused`, `schedule_manager` sends `stop` on
+`/mowing/mission_cmd` and the robot docks (Stop = stop & dock, D8 — the
+run policy / `auto_dock_on_mission_complete` arms the dock). Scope
+`rain_stop_scope`: `all` (default — rain does not care who started the
+mission; the Mowbot page shows "stopped by rain") or `scheduled` (manual
+missions are left to the operator). A scheduled run ends
+`partial/rain_stop`; it does **not** resume when the rain ends — the hold
+hours apply and the next slot is the next scheduled one. The forecast
+never stops a mission, only detected rain. If the mission is in
+`safety_hold` (e-stop) the stop is sent anyway (it is accepted in any
+active state) and the dock waits for the e-stop release as today. Rain
+detected while the robot is `charging` (resume pending) ⇒
+`clear_resume("rain")`, run ends `partial/rain_stop`, robot stays docked.
 
 **Web UI:** Rules card gains "Rain gate" with the four thresholds and a
 live line "Dry · last rain Sat 04:00 · next 12 h 0.4 mm (FMI Lappeenranta,
 3 min ago)" from `/api/weather`; Up next shows "blocked by rain until ≈
 19:00" when `status.rain.blocking`; skipped runs read "rained 2 h ago
-(hold 6 h)". A small rain chip in the TopBar is optional.
+(hold 6 h)"; the Mowbot page mission banner reason map gets `rain` → "stopped by rain — returning to the dock" (the stop arrives as `operator` on the mission side, so the UI reads `ros2/schedule/status.last.reason` / `docking.scheduled_run` to label it). A small rain chip in the TopBar is optional.
 
 **Tests:** backend unit test with recorded FMI/Open-Meteo responses
 (rain / dry / partial outage / both down ⇒ topic keeps the last state with
@@ -535,7 +554,11 @@ an ageing `updated_at`); bench: publish a hand-made `ros2/weather/rain`
 with `raining: true` ⇒ `run_now` refused `rain`; `last_rain_at` 2 h ago
 with hold 6 ⇒ `rain_recent`, hold 1 ⇒ starts; `updated_at` 3 h old ⇒
 starts with a warning, `rain_strict` ⇒ `rain_data_stale`; forecast 3 mm
-in the window with threshold 1 ⇒ `rain_forecast`.
+in the window with threshold 1 ⇒ `rain_forecast`; `raining: true` published
+while a mission runs (`rain_stop_scope: all`) ⇒ `stop` sent, robot docks,
+run `partial/rain_stop`; same with scope `scheduled` on a manual mission ⇒
+nothing; `raining: true` while `charging` ⇒ resume dropped, robot stays
+docked; confirm polls 2 ⇒ one rainy poll does nothing, two ⇒ stop.
 
 ## 6. Web UI
 
@@ -801,8 +824,10 @@ Full run last (multi-charge).
 9. ~~Rain input~~ **DECIDED 2026-09-13:** required, from the internet,
    computed on the LXC backend without Home Assistant — FMI observations +
    Open-Meteo forecast → retained `ros2/weather/rain` → scheduler rain
-   gate with adjustable hold hours / forecast threshold / stale policy.
-   Full design in §5.1, decision D18, Phase 3b.
+   gate with adjustable hold hours / forecast threshold / stale policy;
+   **detected rain also stops a running mission and docks the robot**
+   (`rain_stop_enabled`, scope all/scheduled). Full design in §5.1,
+   decision D18, Phase 3b.
 10. Should the OLED show the next run? (**yes if cheap**)
 
 ## 12. Deliberately not in this plan
