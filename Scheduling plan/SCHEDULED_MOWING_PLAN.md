@@ -385,7 +385,7 @@ in phase `waiting_charge` first).
 |---|---|
 | mission `running`/`paused` | phase `mowing`; count `charge_breaks` on `paused/battery` → `idle` edges |
 | `dock_manager` reports `resume_pending` and robot docked | phase `charging` (the existing low-battery auto-dock + resume-after-charge chain is doing the work; forced on by the run policy §4.3) |
-| `raining` on fresh data while `mowing` (per `rain_stop_confirm_polls`) | send `stop` → phase `returning` → outcome `partial/rain_stop` (§5.1) |
+| `raining` on fresh data while `mowing` (per `rain_stop_confirm_polls`) | `arm_auto_dock("rain")` + send `stop` → phase `returning` → outcome `partial/rain_stop` (§5.1). The same applies outside a scheduled run for a manual mission when `rain_stop_scope: all`, master switch on or off (Q11) |
 | `raining` while `charging` | `clear_resume("rain")` → outcome `partial/rain_stop`, robot stays docked |
 | quiet hours begin while `charging` | tell `dock_manager` `clear_resume("quiet_hours")` ⇒ run ends `partial/quiet_hours` |
 | mission `idle` with reason `complete` | phase `returning` (the run policy makes `dock_manager` dock regardless of the Settings toggle); on `docked` ⇒ `completed`; dock failure ⇒ `failed/dock_failed` (robot stays on the lawn — alert) |
@@ -433,6 +433,9 @@ occurrence fired), `hold {hours}` / `release` (`hold_until`).
   `charge_full` command.
 - `void set_storage_suppressed(bool)` — folded into `want_full` in
   `topup_tick` (like `resume_pending_` is today).
+- `void arm_auto_dock(const std::string & why)` — one-shot: the next
+  `→ idle` edge docks regardless of the params (used by the rain stop,
+  Q11; cleared if the mission does not reach idle within 30 s).
 - `void set_run_policy(bool active)` — while true: `auto_dock_on_mission_complete`
   and `auto_dock_on_low_battery` are treated as true (D8); `on_mission_state`
   reads the policy alongside the params.
@@ -535,8 +538,12 @@ expired within the window.
 **Rain stop (owner decision 2026-09-13):** when `raining` turns true on
 fresh data (for `rain_stop_confirm_polls` consecutive polls) while a
 mission is `running` or `paused`, `schedule_manager` sends `stop` on
-`/mowing/mission_cmd` and the robot docks (Stop = stop & dock, D8 — the
-run policy / `auto_dock_on_mission_complete` arms the dock). Scope
+`/mowing/mission_cmd` and the robot docks — **always**, regardless of
+`auto_dock_on_mission_complete` (Q11: the scheduler tells `dock_manager`
+`arm_auto_dock("rain")` for this stop; a robot stopped for rain must not
+stay on the lawn). The rain stop is enforced **independently of the
+schedule master switch** (Q11): `schedule_enabled` only governs starting
+scheduled runs; `rain_stop_enabled: false` is the way to disable it. Scope
 `rain_stop_scope`: `all` (default — rain does not care who started the
 mission; the Mowbot page shows "stopped by rain") or `scheduled` (manual
 missions are left to the operator). A scheduled run ends
@@ -562,8 +569,10 @@ with hold 6 ⇒ `rain_recent`, hold 1 ⇒ starts; `updated_at` 3 h old ⇒
 starts with a warning, `rain_strict` ⇒ `rain_data_stale`; forecast 3 mm
 in the window with threshold 1 ⇒ `rain_forecast`; `raining: true` published
 while a mission runs (`rain_stop_scope: all`) ⇒ `stop` sent, robot docks,
-run `partial/rain_stop`; same with scope `scheduled` on a manual mission ⇒
-nothing; `raining: true` while `charging` ⇒ resume dropped, robot stays
+run `partial/rain_stop`; same on a manual mission with
+`auto_dock_on_mission_complete` **off** ⇒ still docks (Q11); with the
+schedule master switch OFF ⇒ still stops + docks (Q11); same with scope
+`scheduled` on a manual mission ⇒ nothing; `raining: true` while `charging` ⇒ resume dropped, robot stays
 docked; confirm polls 2 ⇒ one rainy poll does nothing, two ⇒ stop.
 
 ## 6. Web UI
@@ -897,16 +906,15 @@ All ten questions are decided (2026-09-13).
 
 ### 11.1 New questions from the 2026-09-13 consistency review (open)
 
-11. **Rain stop on a manual mission when auto-dock-on-complete is off.**
-    D8 makes a Stop dock only when `auto_dock_on_mission_complete` is on;
-    a rain stop (`rain_stop_scope: all`) on a manual mission would then
-    leave the robot standing in the rain. Proposal: **a rain stop always
-    docks** — the bridge arms the dock itself for this case regardless of
-    the toggle (that is the point of stopping for rain). Related: the rain
-    stop should work **even when the schedule master switch is OFF**
-    (`rain_gate_enabled`/`rain_stop_*` live in the file and are read
-    regardless; the master switch only governs *starting* runs) —
-    proposal: **yes**.
+11. ~~Rain stop on a manual mission~~ **DECIDED 2026-09-14:** (a) **a
+    rain stop always docks**, regardless of `auto_dock_on_mission_complete`
+    — the bridge arms the dock itself for this case (no toggle, on
+    purpose); (b) **the rain stop works while the schedule master switch is
+    OFF** — the master switch governs only *starting* scheduled runs; the
+    rain settings in the file (`rain_stop_enabled`, `rain_stop_scope`,
+    `rain_stop_confirm_polls`) are read and enforced regardless, and
+    `rain_stop_enabled: false` is the deliberate way to switch rain
+    interference off.
 12. **Run now vs quiet hours and the rain gate.** `run_now` obeys every
     precondition today. Proposal: obey the dock, battery and rain gates,
     but **ignore quiet hours** (the owner is present and asking); if you
