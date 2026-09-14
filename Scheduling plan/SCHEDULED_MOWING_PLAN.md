@@ -316,7 +316,10 @@ Skip / end reasons (goto/dock convention, plain strings): `disabled`,
 `missed`, `clock_unsynced`, `no_areas`, `rain`, `rain_recent`,
 `rain_forecast`, `rain_data_stale`, `rain_stop`, `param_refused`,
 `reset_failed`, `undock_failed`, `start_refused`, `operator_stop`,
-`mission_failed`, `dock_failed`, `timeout`, `bridge_restart`, `dock_busy`, `canceled`.
+`mission_failed`, `dock_failed`, `timeout`, `bridge_restart`, `dock_busy`, `canceled`,
+`lidar_unhealthy` (F63, 2026-09-14: the lidar health verdict is blocking — dirty/wet
+lens, not spinning; waitable inside the window, dew can clear), `lidar_off` (F63: no
+verdict yet — the scheduler asserts lidar power at the pre-check and waits for it).
 
 Implementation notes 2026-09-14 (Phase 2): a slot that passes while the
 master switch is OFF or a hold is active is consumed **silently** (no
@@ -374,6 +377,9 @@ no active run (`previous_run_active`) → dock telemetry fresh
 (`dock_offline`) → `physically_docked` (`not_docked`; with `wait_for_dock` on: stay in phase `waiting_dock` and re-check every tick until seated or `T0 + late_start_min`, then `not_docked`) → e-stop clear
 (`estop`) → `motors_allowed` true (`motors_off`) → `bringup` unit running
 (`bringup_down`) → `mow_mission` unit running (`mission_unit_down`; never
+  F63 (2026-09-14): after `bringup_down` the scheduler asserts lidar power and
+  requires the `/lidar/health` verdict: `unhealthy` ⇒ `lidar_unhealthy` (waitable),
+  no verdict yet ⇒ `lidar_off` (waitable, ~13 s after power-on). No monitor ⇒ no gate.
 auto-started — Q13; re-checked within the late-start window) → mission state fresh and `idle`
 (`mission_not_idle` / `mission_state_unknown`) → undock action server ready
 (`nav2_unavailable`) → pack ≥ `min_start_voltage` or dock COMPLETE
@@ -1119,3 +1125,57 @@ the motors master switch OFF for every bench step.
 - [ ] leave the schedule enabled for one real week (field 10.2 step 7); tune `precharge_lead_min`, factor, `mow_min_per_charge`, `charge_break_min`, rain thresholds from the data
 - [ ] update this plan's status header + Docking plan README/04 §6 cross-references; move web UI plan notes to `plans/implemented/` convention if used
 - [ ] memory/handoff notes (what runs where, gotchas found)
+
+## 15. Field log
+
+### 15.1 2026-09-14 — first two scheduled runs; low-battery stop read as an operator stop (FIXED)
+
+**Runs.** `mon-etupiha` 14:30 (run now): undock → mow → complete → dock,
+53 min, flawless. `mon-sivupiha1` 16:30: mowed almost the whole area; wet
+autumn grass pushed the pack to the 35.0 V cutoff at 19:02 → battery gate
+pause → dock_manager low-battery stop → auto-dock (docked 19:04:55). The
+owner enabled `resume_after_charge` (19:06) and set `resume_at_voltage`
+41.5 V (19:09); the automatic resume undocked and sent `start` — and the
+mission mowed **sivupiha2** instead of finishing sivupiha1.
+
+**Root cause (bridge log).** The mission node reports *every* `stop`
+command as reason `operator`, and the `paused/battery` state before the
+bridge's own stop lasted under a second (both edges at 19:02:26), so the 1 Hz
+scheduler saw `running → idle/operator` and applied the D8 rule for an
+operator Stop: `end_run(canceled/operator_stop)` → `returning` → on docked
+(19:04:55) `finalize()` → **restored the stored parameters**
+(`area_filter = ["sivupiha2_coverage"]`, run policy off). The route server
+deferred that filter change ("segment sivupiha1_coverage/segment_9 in
+progress") and applied it at the next segment boundary of the resumed
+mission → sivupiha2. The resume mechanism itself worked as built; the run
+had simply been closed underneath it. History showed `charge_breaks: 0`.
+
+**Fix (bridge commit "low-battery stop is a charge break", 2026-09-14):**
+
+- `DockManager::low_battery_dock_active()` = stop sent / auto-dock armed for
+  low battery / DockRobot running for low battery / resume pending. On the
+  `→ idle` edge the scheduler checks it **before** interpreting `operator`;
+  true ⇒ `enter_charging()` (charge break), never `operator_stop`.
+- The `charging` phase keeps the run open **with its transient settings in
+  place** as long as that chain is alive — whether or not
+  `resume_after_charge` is on (the owner may enable it while the robot
+  charges, as happened). The run ends `partial` only when: the resume is
+  cleared (manual dock/undock/cancel, dock failure — reason `battery`),
+  quiet hours or rain drop it (`quiet_hours` / `rain_stop`), or **the next
+  scheduled slot becomes due** (`next_slot_due`, resume dropped so the
+  schedule proceeds). A resumed mission returns the phase to `mowing`.
+- The max-run clock excludes charge time (`charge_s`, persisted; status
+  `active.elapsed_s` / `charge_s`); history carries `charge_min` and the
+  break count. Bridge-restart re-attach handles a pending resume.
+- UI: Up next shows the break count and "resume after charging is OFF — the
+  run waits"; reason texts `battery`, `next_slot_due`.
+
+**Not changed:** the mission node (D16) — a `stop` origin tag
+(`operator` vs `battery`) would be the cleaner long-term signal; noted as
+optional.
+
+**Owed:** a real low-battery run with the fix (the Wednesday
+sivupiha1 + sivupiha2 run will exercise it; watch `charge break 1` in the
+log, the run staying `charging`, and the resume mowing sivupiha1's remaining
+segments). Until then sivupiha1's saved progress is intact: set its area
+filter in Settings and press Start to finish it by hand.
