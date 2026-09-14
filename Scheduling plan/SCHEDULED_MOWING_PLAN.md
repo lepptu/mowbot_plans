@@ -405,7 +405,7 @@ lawn) ⇒ `returning` (try to dock once).
 **Commands** (`ros2/schedule/cmd`): `reload` (re-read the file now),
 `run_now {id}` (run the sequence immediately — same preconditions incl. the
 dock gate, but it never waits: not docked ⇒ refused `not_docked` at once;
-for testing and "mow it now"; quiet-hours/rain handling per §11 Q12), `cancel` (active run: `stop` the
+for testing and "mow it now"; **ignores quiet hours**, obeys the rain gate — Q12), `cancel` (active run: `stop` the
 mission and dock, outcome `canceled` — identical to pressing Stop, D8), `skip_next` (mark the next
 occurrence fired), `hold {hours}` / `release` (`hold_until`).
 
@@ -799,7 +799,8 @@ Full run last (multi-charge).
    With `schedule_enabled` false ⇒ `disabled`. Inside quiet hours ⇒
    `quiet_hours`. E-stop pressed ⇒ `estop`. Motors OFF ⇒ `motors_off`.
    `mow_mission` unit stopped ⇒ the manager starts it, waits for idle,
-   proceeds (log line).
+   proceeds (log line). `run_now` inside quiet hours ⇒ starts (Q12);
+   `run_now` with `rain_recent` ⇒ refused `rain_recent`.
 4. Transient params: `run_now` for the sivupiha run ⇒ `ros2/mowparams/status`
    shows `area_filter = [sivupiha1_coverage, sivupiha2_coverage]`,
    `lidar_enabled=false`, `perimeter_lidar_mode=off` with `source: live`;
@@ -915,10 +916,13 @@ All ten questions are decided (2026-09-13).
     `rain_stop_confirm_polls`) are read and enforced regardless, and
     `rain_stop_enabled: false` is the deliberate way to switch rain
     interference off.
-12. **Run now vs quiet hours and the rain gate.** `run_now` obeys every
-    precondition today. Proposal: obey the dock, battery and rain gates,
-    but **ignore quiet hours** (the owner is present and asking); if you
-    want to mow in the rain, the normal Start button is the override.
+12. ~~Run now vs gates~~ **DECIDED 2026-09-14:** `run_now` **ignores
+    quiet hours** (the owner is present and asking) and obeys everything
+    else — dock (never waits), battery, e-stop, motors, mission idle,
+    and the **rain gate** (a refusal shows why and when the hold ends;
+    the Mowbot page Start button remains the way to mow in the rain).
+    No settings for this. A run started this way may still be dropped at
+    a charge-break resume that falls inside quiet hours (D9 rule).
 13. **`mow_mission` unit stopped at T0.** §4.1.1 currently *starts* the
     unit automatically. A unit the owner stopped on purpose (maintenance,
     a test) would come back at 13:00. Proposal: **skip with
