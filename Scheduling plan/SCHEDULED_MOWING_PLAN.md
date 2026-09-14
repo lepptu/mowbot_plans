@@ -2,10 +2,10 @@
 
 > Status: **PLANNED 2026-09-13; all 14 owner questions decided 2026-09-14;
 > Phase 1 (schedule file + Schedule page) DONE 2026-09-14 (web UI `da42da6`);
-> Phases 2 and 3 (bridge `schedule_manager`, charging integration, run
-> policy, Stop & dock) IMPLEMENTED and live 2026-09-14 with the master
-> switch OFF — motion tests with the owner owed (§14 gates); next = Phase 3b
-> (rain gate).** Builds on the docking
+> Phases 2, 3 and 3b (bridge `schedule_manager`, charging integration, run
+> policy, Stop & dock, rain gate + rain stop with the LXC weather poller)
+> IMPLEMENTED and live 2026-09-14 with the master switch OFF — motion tests
+> with the owner owed (§14 gates); next = Phase 4 (HA + OLED).** Builds on the docking
 > master plan ([../Docking plan/README.md](../Docking%20plan/README.md)) —
 > in particular `dock_manager` (04 §3, §6) and the web UI conventions of
 > 05. Everything a scheduled run needs on the robot already exists as a
@@ -814,7 +814,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 | **1 — Schedule file + page (no execution)** — **DONE 2026-09-14** (`da42da6`) | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
 | **2 — Robot scheduler** — **IMPLEMENTED 2026-09-14** (live, master OFF, motion tests owed) | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
 | **3 — Charging integration + calibration** — **IMPLEMENTED 2026-09-14** (tests owed) | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
-| **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
+| **3b — Rain gate** — **IMPLEMENTED 2026-09-14** (mission tests owed) | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
 | **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
 
 Rough size: Phase 1 ≈ 1 day (the grid is the bulk), Phase 2 ≈ 1–1.5 days
@@ -1094,19 +1094,19 @@ the motors master switch OFF for every bench step.
 ### Phase 3b — rain gate
 
 **LXC backend**
-- [ ] `weather.py`: asyncio poller (Open-Meteo at the datum primary, FMI HARMONIE point fallback, FMI station 101237 secondary), derivation table §5.1, `backend/data/weather.json` persistence, back-off, retained publish `ros2/weather/rain` every poll, `GET /api/weather`; settings `WEATHER_POLL_S`, `WEATHER_FMI_STATION`
-- [ ] `config.py` + `.env` template entries
-- [ ] ACL: `backend` `topic write ros2/weather/#`; reload mosquitto
-- [ ] unit tests with recorded responses (rain / dry / partial outage / both down)
+- [x] `weather.py`: asyncio poller (Open-Meteo at the datum primary, FMI HARMONIE point fallback, FMI station 101237 secondary), derivation table §5.1, `backend/data/weather.json` persistence, back-off, retained publish `ros2/weather/rain` every poll, `GET /api/weather`; settings `WEATHER_POLL_S`, `WEATHER_FMI_STATION` — done 2026-09-14
+- [x] `config.py` + `.env` template entries — done 2026-09-14
+- [x] ACL: `backend` `topic write ros2/weather/#`; reload mosquitto — done 2026-09-14
+- [x] unit tests with recorded responses (rain / dry / partial outage / both down) — done 2026-09-14
 
 **Bridge**
-- [ ] `schedule_manager`: `ros2/weather/rain` subscription (JSON, telemetry-style), rain preconditions (`rain`, `rain_recent`, `rain_forecast`, `rain_data_stale` per `rain_strict`), rain stop (`rain_stop_enabled`/`scope`/`confirm_polls`, `arm_auto_dock("rain")` + `stop`, independent of the master switch — Q11), `clear_resume("rain")` while charging, status `rain` block
-- [ ] build + restart
+- [x] `schedule_manager`: `ros2/weather/rain` subscription (JSON, telemetry-style), rain preconditions (`rain`, `rain_recent`, `rain_forecast`, `rain_data_stale` per `rain_strict`), rain stop (`rain_stop_enabled`/`scope`/`confirm_polls`, `arm_auto_dock("rain")` + `stop`, independent of the master switch — Q11), `clear_resume("rain")` while charging, status `rain` block — done 2026-09-14
+- [x] build + restart — done 2026-09-14
 
 **Frontend**
-- [ ] Rules card "Rain gate" section + live weather line from `/api/weather`; Up next "blocked by rain until ≈ …"; Mowbot page "stopped by rain — returning to the dock"; optional TopBar rain chip
-- [ ] LXC deploy
-- [ ] **Gate:** §5.1 tests (hand-published `ros2/weather/rain` cases: refuse `rain`/`rain_recent`, stale ignore vs strict, forecast threshold, rain stop on scheduled + manual missions, auto-dock toggle off still docks, master switch off still stops, confirm polls 2, resume dropped while charging)
+- [x] Rules card "Rain gate" section + live weather line from `/api/weather`; Up next "blocked by rain until ≈ …"; Mowbot page "stopped by rain — returning to the dock"; optional TopBar rain chip — done 2026-09-14
+- [x] LXC deploy — done 2026-09-14
+- [x] **Gate (bench part) 2026-09-14:** backend unit tests pass; hand-published `ros2/weather/rain` with the master ON and the robot docked: `run_now` refused `rain`, `rain_recent` (2 h ago, hold 6), `rain_forecast` (3 mm in the window); stale data ⇒ `fresh:false, blocking:false` (gate ignored, strict off); real backend state then verified end to end (API → retained topic → bridge `status.rain`). **Owed with a running mission:** rain stop on scheduled + manual missions, auto-dock toggle off still docks, master switch off still stops, confirm polls 2, resume dropped while charging, `rain_strict` ⇒ `rain_data_stale`.
 
 ### Phase 4 — HA + OLED
 
