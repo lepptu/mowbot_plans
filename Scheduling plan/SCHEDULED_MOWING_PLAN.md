@@ -991,3 +991,109 @@ All fourteen questions are decided (2026-09-14); the plan is ready for Phase 1.
   `PLAN_UI_NAV_AND_HOME.md` (SideNav/pages).
 - Mission lifecycle & gates: `mowing_navigation` BT_REVIEW (S5 lifecycle,
   N1 battery gate, F27 boot-start/auto-reset, F29 lidar idle).
+
+## 14. Implementation to-do list (rollout order; tick as done, note commit + date)
+
+Conventions: robot builds = one `colcon build --symlink-install
+--packages-select <pkg>` from `~/pi_ws` per command, then restart the
+unit; LXC deploy = rsync `server_lxc/` (exclude node_modules/dist/.venv/
+.env/cache/__pycache__), `runuser -u mowbot -- npm run build`, restart
+`mowbot-backend.service`; ACL edits by targeted append + `systemctl reload
+mosquitto` (bridge rules need `restart`). Robot is physically docked and
+the motors master switch OFF for every bench step.
+
+### Phase 1 — schedule file + Schedule page (no execution)
+
+**Robot (web UI repo `robot/`)**
+- [ ] `fileserver.py`: `WRITABLE["/config/schedule.json"]` (`create: True`, backups in `config/backups/`, `_validate_schedule` = JSON object, `version` 1, `runs` ≤ 32, id/day/time shape)
+- [ ] `version_watcher.py`: `FILES[config/schedule.json] = ros2/schedule/version`
+- [ ] restart `mowbot-fileserver.service` + `mowbot-version-watcher.service`; `curl` GET/PUT round trip with `If-Match`
+
+**LXC backend**
+- [ ] `config.py`: `SCHEDULE_URL`
+- [ ] `robot_client.py`: fetch schedule in `fetch_once()` (404 tolerated), `put_schedule()`, refetch on `ros2/schedule/version`
+- [ ] `main.py`: `GET /api/schedule` (+ `X-Schedule-Sha1`), `PUT /api/schedule` (full validation §3.1 incl. area names + coverage presence, `updated_at`, 409 on conflict)
+- [ ] `main.py` + new `schedule_estimates.py`: `GET /api/schedule/estimates` (D12: coverage `est_time_min` × factor + overhead, charge breaks; factor/endurance from `/api/stats` completed missions, defaults when < 3)
+- [ ] unit tests: validator (bad day/time/area/enum/duplicate id), estimate math, calibration with the 2026-09 mission history
+
+**Frontend**
+- [ ] `SideNav.jsx` entry `schedule` after `map`; `App.jsx` route
+- [ ] `hooks/useSchedule.js` (GET + sha1 + PUT + estimates + `ros2/schedule/version` refetch + `ros2/schedule/status` topic)
+- [ ] `lib/scheduleEstimate.js` (D12 duration model, charge-break bands, `est_min` per run)
+- [ ] `pages/SchedulePage.jsx` skeleton: header pill (reads `schedule_enabled` from `ros2/mowparams/status`, disabled until Phase 2), "+ New run", "scheduler not running on the robot" notice while `ros2/schedule/status` is absent
+- [ ] `components/schedule/WeekGrid.jsx` + `RunBlock.jsx` (7 columns, hour rows, blocks by estimate, hatched charge breaks, quiet-hours shading, now line, disabled striping, OFF banner)
+- [ ] phone layout < 700 px (stacked day sections)
+- [ ] `components/schedule/RunEditor.jsx` (day chips, time, area checkboxes + "All areas", LiDAR toggle, perimeter mode select with defaults from live params, enabled, label, max run min; live footer estimate; warnings: overlap, quiet hours, charge break with resume off, missing coverage; writes `est_min`)
+- [ ] `components/schedule/ScheduleRules.jsx` — file `options` only in this phase (lead, require full, min voltage, start window, late start, wait for dock, quiet hours, rain thresholds, rain stop + scope + confirm polls, max run factor)
+- [ ] `UpNextCard.jsx` (browser-computed next run with "scheduler offline" badge) + "This week" card
+- [ ] styles (`styles.css` grid/blocks/hatching/pill)
+- [ ] LXC deploy; create the four example runs; two-browser 409 test; phone check
+- [ ] **Gate:** bench 10.1 step 1 passes (file round trip, backups, version topic, conflict)
+
+### Phase 2 — robot scheduler
+
+**Bridge (`mowbot_mqtt_bridge`)**
+- [ ] `bridge_config.{hpp,cpp}`: `ScheduleConfig` + `schedule:` section parser; `topics.yaml` section (§4.5) + `schedule_enabled` in `param_control.nodes.mqtt_bridge_node`
+- [ ] `ParamManager`: `apply_transient()`, `restore_transient()`, `reset_progress(cb)`, `live_value()` (§4.2)
+- [ ] `LaunchManager`: `unit_state(id)` (read-only, Q13)
+- [ ] `DockManager`: `start_mission_from_dock(id, cb)` (refactor of the resume tail, resume path re-tested), getters (§4.3), `scheduled_run` status field
+- [ ] `schedule_manager.{hpp,cpp}`: file load/validate (mtime poll 5 s), clock + ISO-week `last_fired`, `next` computation, preconditions §4.1.1 (incl. `waiting_dock`, quiet hours, master switch, hold), run sequence §4.1.2, supervision §4.1.3 (without pre-charge/rain — Phase 3/3b), `max_run_min`, state file, status payload (≤ 60 s republish, shares the dock tick), commands `reload`/`run_now`/`cancel`/`skip_next`/`hold`/`release`
+- [ ] `mqtt_bridge_node.cpp` wiring (handlers, reconnect republish)
+- [ ] bridge restart re-attach logic (`active` in state file)
+- [ ] build + restart `mowbot-mqtt-bridge.service`; check `ros2/schedule/status` retained, `ros2/mowparams/status` shows `schedule_enabled`
+
+**LXC**
+- [ ] ACL: `webui` `topic write ros2/schedule/cmd`; reload mosquitto
+
+**Frontend**
+- [ ] header pill + Rules master toggle live (`schedule_enabled` via `ros2/mowparams/cmd`, press-again confirm on enable); Settings → Docking mirror toggle
+- [ ] Up next from `status.next` / `active` / `last` with plain-English reasons; Run now / Skip next / Hold / Release buttons; Cancel run
+- [ ] active block pulsing + phase text; `AlertBanner` line for skipped/failed/timeout; `MissionControl` "Started by the schedule (…)"
+- [ ] LXC deploy
+- [ ] **Gate:** bench 10.1 steps 2–5, 7–9 pass (clock/DST, gates incl. `waiting_dock`, transient params + restore across a bridge restart, progress reset, overlap, missed, switches); field 10.2 steps 1–4 (short run via `run_now`, clock-fired run, Pause/Stop, Cancel) with `schedule_enabled` OFF except during the test
+
+### Phase 3 — charging integration + calibration + Stop & dock
+
+**Bridge**
+- [ ] `DockManager`: `request_charge_full(why)`, `set_storage_suppressed()`, `set_run_policy()`, `arm_auto_dock(why)`, **D8 extension** (auto-dock on `operator` stop when `auto_dock_on_mission_complete` is on) + `topics.yaml` comment; Docking plan 04 §6 note
+- [ ] `schedule_manager`: pre-charge at `T0 − lead` (D6), `min_start_voltage` / `require_full_charge` / `start_window_min` (`waiting_charge`, D7), quiet-hour resume block (`clear_resume("quiet_hours")`), run-end cleanup of `charge_full_requested_`
+- [ ] build + restart
+
+**LXC backend**
+- [ ] calibration from stats (factor, `mow_min_per_charge`, `charge_break_min`) in `/api/schedule/estimates`; optional `GET /api/schedule/history`
+
+**Frontend**
+- [ ] Stop button → "Stop & dock" label + confirm/help text whenever docking follows (D8); HA button description
+- [ ] last-week ghost blocks (optional)
+- [ ] LXC deploy
+- [ ] **Owner:** enable `resume_after_charge` in Settings → Docking; one supervised low-battery dock + resume (temporarily raised `mow_battery_low_voltage`)
+- [ ] **Gate:** bench 10.1 step 6 (pre-charge, waiting_charge); field 10.2 steps 5–6 (multi-charge run incl. quiet-hours drop, `max_run_min` timeout)
+
+### Phase 3b — rain gate
+
+**LXC backend**
+- [ ] `weather.py`: asyncio poller (Open-Meteo at the datum primary, FMI HARMONIE point fallback, FMI station 101237 secondary), derivation table §5.1, `backend/data/weather.json` persistence, back-off, retained publish `ros2/weather/rain` every poll, `GET /api/weather`; settings `WEATHER_POLL_S`, `WEATHER_FMI_STATION`
+- [ ] `config.py` + `.env` template entries
+- [ ] ACL: `backend` `topic write ros2/weather/#`; reload mosquitto
+- [ ] unit tests with recorded responses (rain / dry / partial outage / both down)
+
+**Bridge**
+- [ ] `schedule_manager`: `ros2/weather/rain` subscription (JSON, telemetry-style), rain preconditions (`rain`, `rain_recent`, `rain_forecast`, `rain_data_stale` per `rain_strict`), rain stop (`rain_stop_enabled`/`scope`/`confirm_polls`, `arm_auto_dock("rain")` + `stop`, independent of the master switch — Q11), `clear_resume("rain")` while charging, status `rain` block
+- [ ] build + restart
+
+**Frontend**
+- [ ] Rules card "Rain gate" section + live weather line from `/api/weather`; Up next "blocked by rain until ≈ …"; Mowbot page "stopped by rain — returning to the dock"; optional TopBar rain chip
+- [ ] LXC deploy
+- [ ] **Gate:** §5.1 tests (hand-published `ros2/weather/rain` cases: refuse `rain`/`rain_recent`, stale ignore vs strict, forecast threshold, rain stop on scheduled + manual missions, auto-dock toggle off still docks, master switch off still stops, confirm polls 2, resume dropped while charging)
+
+### Phase 4 — HA + OLED
+
+- [ ] `homeassistant.yaml`: sensors next run / phase / last outcome, switch `Mowing schedule` (`ha/ros2/mowparams/cmd`), buttons run-next / skip-next / hold (`ha/ros2/schedule/cmd`); LXC `mowbot-remote.conf` `in` rules (`schedule/cmd`, `mowparams/cmd` if not present) + `systemctl restart mosquitto`; verify on the HA broker
+- [ ] OLED (`mowbot_oled_interface`): `mqtt_status.py` second subscription (`ros2/schedule/status` → `state_store` `sched_*`, 60 s expiry), `ui.py` `page_schedule` (5/5, §7.1 rows), Select → read-only run list, local `schedule.json` fallback with `(no bridge)` marker, skip/fail alert once per `last.at`; ASCII only
+- [ ] restart `mowbot-oled-ui.service`; check page with bridge up, bridge down, schedule OFF, active run
+- [ ] **Gate:** HA entities visible + button presses land on the robot; OLED page correct in all four states
+
+### Wrap-up
+- [ ] leave the schedule enabled for one real week (field 10.2 step 7); tune `precharge_lead_min`, factor, `mow_min_per_charge`, `charge_break_min`, rain thresholds from the data
+- [ ] update this plan's status header + Docking plan README/04 §6 cross-references; move web UI plan notes to `plans/implemented/` convention if used
+- [ ] memory/handoff notes (what runs where, gotchas found)
