@@ -289,7 +289,7 @@ mission record; this is only for the status topic and the calendar's
 | Topic | Dir | Payload |
 |---|---|---|
 | `ros2/schedule/status` | robot → UI, **retained**, republished on change + every 60 s | see below |
-| `ros2/schedule/cmd` | UI/HA → robot, never retained | `{"action": "reload" \| "run_now" \| "cancel" \| "skip_next" \| "hold" \| "release", "id"?, "hours"?}` |
+| `ros2/schedule/cmd` | UI/HA → robot, never retained | `{"action": "reload" \| "run_now" \| "cancel" \| "skip_next" \| "unskip" \| "hold" \| "release", "id"?, "run"?, "hours"?}` — `run` = run id for `run_now` / `unskip`; `id` = echo id. `unskip` (added 2026-09-14 at the owner's request) undoes a `skip_next` for this week's occurrence |
 | `ros2/schedule/version` | version_watcher, retained | `{sha1, mtime}` — backend refetch trigger (same as `ros2/dock/pose_version`) |
 | `ros2/weather/rain` | LXC backend → robot + UI, **retained**, every poll (10 min) | `{raining, last_rain_at, mm_1h, mm_24h, forecast: {hours, mm, prob_max}, sources: {open_meteo: {at}, fmi_point: {at}, fmi_station: {fmisid, name, at}}, station_mm_24h, updated_at}` (§5.1) |
 
@@ -301,7 +301,7 @@ Status field contract (the UI is written against this):
 | `hold_until` | int | epoch s, 0 = none (from `hold`) |
 | `clock_ok` | bool | NTP synchronized marker present (or RTC time plausible) |
 | `file` | `{sha1, loaded_at, error}` | `error` non-empty = last parse/validation failure, previous good schedule stays active |
-| `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_reason, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
+| `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_reason, last_at, skipped, skipped_at}]` — `skipped` = this week's occurrence was skipped with `skip_next` and can still be restored (Up next card "Restore") | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
 | `next` | `{id, at, precharge_at, will_start} \| null` | the earliest enabled run — reported even while OFF / on hold; `will_start` = the clock would start it (impl. 2026-09-14) |
 | `active` | `{id, phase, reason, started_at, since, mission_state, mission_reason, charge_breaks, manual, window_until?} \| null` | `phase` ∈ `precharging \| waiting \| waiting_dock \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning`; while a slot's window is open and a precondition fails, `phase` is `waiting*` with `reason` = the blocker and `window_until` = end of the late-start window (impl. 2026-09-14) |
 | `rain` | `{raining, last_rain_at, mm_24h, forecast_mm, age_s, blocking, reason} \| null` | the scheduler's view of `ros2/weather/rain` (§5.1); `blocking` = the gate would refuse right now |
