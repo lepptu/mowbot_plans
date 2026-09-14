@@ -1,7 +1,9 @@
 # Scheduled Mowing — weekly schedule (web UI + robot side)
 
 > Status: **PLANNED 2026-09-13; all 14 owner questions decided 2026-09-14;
-> no code written — ready for Phase 1 (to-do list §14).** Builds on the docking
+> Phase 1 (schedule file + Schedule page, no execution) IMPLEMENTED and
+> deployed 2026-09-14 (web UI `da42da6`) — browser/phone check owed; next =
+> Phase 2 (to-do list §14).** Builds on the docking
 > master plan ([../Docking plan/README.md](../Docking%20plan/README.md)) —
 > in particular `dock_manager` (04 §3, §6) and the web UI conventions of
 > 05. Everything a scheduled run needs on the robot already exists as a
@@ -796,7 +798,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 | Phase | Deliverable | Touches | Depends on |
 |---|---|---|---|
 | **0 — Decisions** | Owner answers §11 — **DONE 2026-09-14** (14/14) | plan | — |
-| **1 — Schedule file + page (no execution)** | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
+| **1 — Schedule file + page (no execution)** — **DONE 2026-09-14** (`da42da6`) | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
 | **2 — Robot scheduler** | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
 | **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
@@ -1012,30 +1014,30 @@ the motors master switch OFF for every bench step.
 ### Phase 1 — schedule file + Schedule page (no execution)
 
 **Robot (web UI repo `robot/`)**
-- [ ] `fileserver.py`: `WRITABLE["/config/schedule.json"]` (`create: True`, backups in `config/backups/`, `_validate_schedule` = JSON object, `version` 1, `runs` ≤ 32, id/day/time shape)
-- [ ] `version_watcher.py`: `FILES[config/schedule.json] = ros2/schedule/version`
-- [ ] restart `mowbot-fileserver.service` + `mowbot-version-watcher.service`; `curl` GET/PUT round trip with `If-Match`
+- [x] `fileserver.py`: `WRITABLE["/config/schedule.json"]` (`create: True`, backups in `config/backups/`, `_validate_schedule` = JSON object, `version` 1, `runs` ≤ 32, id/day/time shape) — done 2026-09-14, web UI `da42da6`
+- [x] `version_watcher.py`: `FILES[config/schedule.json] = ros2/schedule/version` — done 2026-09-14, web UI `da42da6`
+- [x] restart `mowbot-fileserver.service` + `mowbot-version-watcher.service`; `curl` GET/PUT round trip with `If-Match` — done 2026-09-14, web UI `da42da6`
 
 **LXC backend**
-- [ ] `config.py`: `SCHEDULE_URL`
-- [ ] `robot_client.py`: fetch schedule in `fetch_once()` (404 tolerated), `put_schedule()`, refetch on `ros2/schedule/version`
-- [ ] `main.py`: `GET /api/schedule` (+ `X-Schedule-Sha1`), `PUT /api/schedule` (full validation §3.1 incl. area names + coverage presence, `updated_at`, 409 on conflict)
-- [ ] `main.py` + new `schedule_estimates.py`: `GET /api/schedule/estimates` (D12: coverage `est_time_min` × factor + overhead, charge breaks; factor/endurance from `/api/stats` completed missions, defaults when < 3)
-- [ ] unit tests: validator (bad day/time/area/enum/duplicate id), estimate math, calibration with the 2026-09 mission history
+- [x] `config.py`: `SCHEDULE_URL` — done 2026-09-14, web UI `da42da6`
+- [x] `robot_client.py`: fetch schedule in `fetch_once()` (404 tolerated), `put_schedule()`, refetch on `ros2/schedule/version` — done 2026-09-14, web UI `da42da6`
+- [x] `main.py`: `GET /api/schedule` (+ `X-Schedule-Sha1`), `PUT /api/schedule` (full validation §3.1 incl. area names + coverage presence, `updated_at`, 409 on conflict) — done 2026-09-14, web UI `da42da6`
+- [x] `main.py` + new `schedule_estimates.py`: `GET /api/schedule/estimates` (D12: coverage `est_time_min` × factor + overhead, charge breaks; factor/endurance from `/api/stats` completed missions, defaults when < 3) — done 2026-09-14, web UI `da42da6`
+- [x] unit tests: validator (bad day/time/area/enum/duplicate id), estimate math, calibration with the 2026-09 mission history — `backend/tests/test_schedule.py`, passes on the Pi and the LXC — done 2026-09-14, web UI `da42da6`
 
 **Frontend**
-- [ ] `SideNav.jsx` entry `schedule` after `map`; `App.jsx` route
-- [ ] `hooks/useSchedule.js` (GET + sha1 + PUT + estimates + `ros2/schedule/version` refetch + `ros2/schedule/status` topic)
-- [ ] `lib/scheduleEstimate.js` (D12 duration model, charge-break bands, `est_min` per run)
-- [ ] `pages/SchedulePage.jsx` skeleton: header pill (reads `schedule_enabled` from `ros2/mowparams/status`, disabled until Phase 2), "+ New run", "scheduler not running on the robot" notice while `ros2/schedule/status` is absent
-- [ ] `components/schedule/WeekGrid.jsx` + `RunBlock.jsx` (7 columns, hour rows, blocks by estimate, hatched charge breaks, quiet-hours shading, now line, disabled striping, OFF banner)
-- [ ] phone layout < 700 px (stacked day sections)
-- [ ] `components/schedule/RunEditor.jsx` (day chips, time, area checkboxes + "All areas", LiDAR toggle, perimeter mode select with defaults from live params, enabled, label, max run min; live footer estimate; warnings: overlap, quiet hours, charge break with resume off, missing coverage; writes `est_min`)
-- [ ] `components/schedule/ScheduleRules.jsx` — file `options` only in this phase (lead, require full, min voltage, start window, late start, wait for dock, quiet hours, rain thresholds, rain stop + scope + confirm polls, max run factor)
-- [ ] `UpNextCard.jsx` (browser-computed next run with "scheduler offline" badge) + "This week" card
-- [ ] styles (`styles.css` grid/blocks/hatching/pill)
-- [ ] LXC deploy; create the four example runs; two-browser 409 test; phone check
-- [ ] **Gate:** bench 10.1 step 1 passes (file round trip, backups, version topic, conflict)
+- [x] `SideNav.jsx` entry `schedule` after `map`; `App.jsx` route — done 2026-09-14, web UI `da42da6`
+- [x] `hooks/useSchedule.js` (GET + sha1 + PUT + estimates + `ros2/schedule/version` refetch + `ros2/schedule/status` topic) — done 2026-09-14, web UI `da42da6`
+- [x] `lib/scheduleEstimate.js` (D12 duration model, charge-break bands, `est_min` per run) — done 2026-09-14, web UI `da42da6`
+- [x] `pages/SchedulePage.jsx` skeleton: header pill (reads `schedule_enabled` from `ros2/mowparams/status`, disabled until Phase 2), "+ New run", "scheduler not running on the robot" notice while `ros2/schedule/status` is absent — done 2026-09-14, web UI `da42da6`
+- [x] `components/schedule/WeekGrid.jsx` + `RunBlock.jsx` (7 columns, hour rows, blocks by estimate, hatched charge breaks, quiet-hours shading, now line, disabled striping, OFF banner) — done 2026-09-14, web UI `da42da6`
+- [x] phone layout < 700 px (stacked day sections) — done 2026-09-14, web UI `da42da6`
+- [x] `components/schedule/RunEditor.jsx` (day chips, time, area checkboxes + "All areas", LiDAR toggle, perimeter mode select with defaults from live params, enabled, label, max run min; live footer estimate; warnings: overlap, quiet hours, charge break with resume off, missing coverage; writes `est_min`) — done 2026-09-14, web UI `da42da6`
+- [x] `components/schedule/ScheduleRules.jsx` — file `options` only in this phase (lead, require full, min voltage, start window, late start, wait for dock, quiet hours, rain thresholds, rain stop + scope + confirm polls, max run factor) — done 2026-09-14, web UI `da42da6`
+- [x] `UpNextCard.jsx` (browser-computed next run with "scheduler offline" badge) + "This week" card — done 2026-09-14, web UI `da42da6`
+- [x] styles (`styles.css` grid/blocks/hatching/pill) — done 2026-09-14, web UI `da42da6`
+- [x] LXC deploy (backend + bundle, 2026-09-14); four example runs written through `PUT /api/schedule` (est_min 58 / 52 / 354 / 567 with the live calibration: factor 1.48 from 5 missions, 127 min/charge from 4); stale-sha1 409 and bad-area 400 verified; browser/phone check **owed to the owner** (no browser on the Pi)
+- [x] **Gate:** bench 10.1 step 1 — file round trip, backup `config/backups/schedule.json.<stamp>`, retained `ros2/schedule/version`, fileserver 400/409, backend 409 all verified 2026-09-14 via API (the two-browser variant is the same 409 path; UI-level check owed with the browser pass)
 
 ### Phase 2 — robot scheduler
 
