@@ -287,7 +287,7 @@ mission record; this is only for the status topic and the calendar's
 | `ros2/schedule/status` | robot → UI, **retained**, republished on change + every 60 s | see below |
 | `ros2/schedule/cmd` | UI/HA → robot, never retained | `{"action": "reload" \| "run_now" \| "cancel" \| "skip_next" \| "hold" \| "release", "id"?, "hours"?}` |
 | `ros2/schedule/version` | version_watcher, retained | `{sha1, mtime}` — backend refetch trigger (same as `ros2/dock/pose_version`) |
-| `ros2/weather/rain` | LXC backend → robot + UI, **retained**, every poll (10 min) | `{raining, last_rain_at, mm_1h, mm_24h, forecast: {hours, mm, prob_max}, sources: {fmi: {station, at}, open_meteo: {at}}, updated_at}` (§5.1) |
+| `ros2/weather/rain` | LXC backend → robot + UI, **retained**, every poll (10 min) | `{raining, last_rain_at, mm_1h, mm_24h, forecast: {hours, mm, prob_max}, sources: {open_meteo: {at}, fmi_point: {at}, fmi_station: {fmisid, name, at}}, station_mm_24h, updated_at}` (§5.1) |
 
 Status field contract (the UI is written against this):
 
@@ -500,10 +500,34 @@ also fetches the schedule (404 tolerated).
 
 ### 5.1 Rain input — weather from the internet, computed on the LXC (D18)
 
-Verified 2026-09-13 from the LXC (`curl`, no key, no account):
+Verified 2026-09-13/14 from the LXC (`curl`, no key, no account).
+**Station survey 2026-09-14 (Q14):** the two FMI stations nearest the
+datum (Lappeenranta Hiekkapakka 21 km, Konnunsuo 30 km) do **not** report
+precipitation; the nearest that do are Parikkala Koitsanlahti (38 km),
+Puumala (44 km) and Lappeenranta lentoasema (46 km, fmisid 101237). A
+gauge 40 km away misses showers over the lawn and holds mowing for
+showers elsewhere, so station data is **secondary**. Sources, in order:
 
-- **FMI open data** (measured): `https://opendata.fmi.fi/wfs?…storedquery_id=fmi::observations::weather::simple&place=lappeenranta&parameters=r_1h,ri_10min` returns hourly precipitation `r_1h` (mm) and 10-minute intensity `ri_10min` (mm/h) from the nearest station. Hourly values lag 1–5 h; `ri_10min` is the fresh "raining now" signal. `place` (or `fmisid`) is a backend setting — the owner picks the station closest to the lawn.
-- **Open-Meteo** (model): `https://api.open-meteo.com/v1/forecast?latitude=61.2806&longitude=28.8276&hourly=precipitation,precipitation_probability&past_hours=24&forecast_hours=12&timezone=Europe/Helsinki` — coordinates = the datum from `/api/config`. Past hours are model estimates, used only as a fallback when FMI is unreachable.
+1. **Primary — Open-Meteo at the datum coordinates** (model blend with
+   radar/observations assimilated, 15-min resolution):
+   `https://api.open-meteo.com/v1/forecast?latitude=61.2806&longitude=28.8276&current=precipitation,rain,showers&minutely_15=precipitation&past_minutely_15=96&forecast_minutely_15=48&hourly=precipitation,precipitation_probability&past_hours=24&forecast_hours=12&timezone=Europe/Helsinki`
+   — `current.precipitation` (15-min interval) = "raining now"; the
+   `minutely_15` past series = `last_rain_at`; `hourly` = forecast for the
+   run window. Coordinates = the datum from `/api/config`.
+2. **Fallback for the point data — FMI HARMONIE point forecast** at the
+   same coordinates (`fmi::forecast::harmonie::surface::point::simple`,
+   `latlon=61.2806,28.8276`, `Precipitation1h`), used when Open-Meteo is
+   unreachable.
+3. **Secondary station observation — Lappeenranta lentoasema (fmisid
+   101237)** (`fmi::observations::weather::simple`, `fmisid=101237`,
+   `r_1h`, `ri_10min`): corroborates wider frontal rain and feeds
+   `mm_24h`; it **never blocks a run on its own**. Backend setting
+   `WEATHER_FMI_STATION=101237`.
+
+Limits stated in the UI ("estimated for your coordinates, not measured"):
+small shower cells can be missed or reported when they pass nearby; dew is
+invisible to every internet source. The dock-mounted sensor (§12) is the
+eventual measured input and takes precedence over all three.
 
 **`backend/weather.py`** (new): asyncio task started in the lifespan, polls
 both every `WEATHER_POLL_S` (600) with `httpx`, 15 s timeout, exponential
@@ -511,11 +535,11 @@ back-off on errors (max 1 h), never crashes the app. Derives:
 
 | Field | Rule |
 |---|---|
-| `raining` | FMI `ri_10min` > 0 in the latest observation, else Open-Meteo current-hour precipitation ≥ 0.2 mm |
-| `last_rain_at` | newest observation with `r_1h` ≥ 0.2 mm (its hour end) or `ri_10min` > 0; persisted in `backend/data/weather.json` so a backend restart does not forget yesterday's rain |
-| `mm_1h`, `mm_24h` | sums of FMI `r_1h` (fallback Open-Meteo past hours) |
+| `raining` | Open-Meteo `current.precipitation` ≥ 0.1 mm per 15 min (fallback: FMI point forecast current hour ≥ 0.2 mm); the station's `ri_10min` is recorded but does not set `raining` by itself |
+| `last_rain_at` | newest 15-min slot with Open-Meteo precipitation ≥ 0.1 mm (fallback: FMI point-forecast hour ≥ 0.2 mm); persisted in `backend/data/weather.json` so a backend restart does not forget yesterday's rain |
+| `mm_1h`, `mm_24h` | sums of Open-Meteo past hours at the coordinates; `station_mm_24h` alongside from the airport `r_1h` for comparison |
 | `forecast` | next 12 h of Open-Meteo `precipitation` + max `precipitation_probability` |
-| `sources` | which service answered and when; a source older than 3 polls is dropped from the derivation |
+| `sources` | which service answered and when (`open_meteo`, `fmi_point`, `fmi_station`); a source older than 3 polls is dropped from the derivation |
 
 Published retained on `ros2/weather/rain` after every poll (also when
 unchanged, so `updated_at` doubles as the liveness signal) and served as
@@ -556,8 +580,8 @@ detected while the robot is `charging` (resume pending) ⇒
 `clear_resume("rain")`, run ends `partial/rain_stop`, robot stays docked.
 
 **Web UI:** Rules card gains "Rain gate" with the four thresholds and a
-live line "Dry · last rain Sat 04:00 · next 12 h 0.4 mm (FMI Lappeenranta,
-3 min ago)" from `/api/weather`; Up next shows "blocked by rain until ≈
+live line "Dry · last rain Sat 04:00 · next 12 h 0.4 mm (Open-Meteo at
+your coordinates, 3 min ago · airport 24 h 0.0 mm)" from `/api/weather`; Up next shows "blocked by rain until ≈
 19:00" when `status.rain.blocking`; skipped runs read "rained 2 h ago
 (hold 6 h)"; the Mowbot page mission banner reason map gets `rain` → "stopped by rain — returning to the dock" (the stop arrives as `operator` on the mission side, so the UI reads `ros2/schedule/status.last.reason` / `docking.scheduled_run` to label it). A small rain chip in the TopBar is optional.
 
@@ -930,11 +954,16 @@ All ten questions are decided (2026-09-13).
     window, so a crashed unit that systemd restarts within 15 s still
     gets its run); `bringup` down ⇒ `bringup_down`. A unit the owner
     stopped stays stopped until the owner starts it.
-14. **FMI station.** `place=lappeenranta` in §5.1 resolves to whatever
-    station FMI picks for the name. The datum (61.2806 N, 28.8276 E) is
-    near Joutseno/Saimaa — the owner should choose the nearest observation
-    station (FMI `fmisid`, e.g. Lappeenranta airport vs. Joutseno) as the
-    backend setting `WEATHER_FMI_STATION`; the plan cannot decide this.
+14. ~~FMI station~~ **DECIDED 2026-09-14:** station gauges are too far
+    (nearest rain-reporting station 38 km; survey in §5.1). Primary source
+    = **Open-Meteo at the datum coordinates** (15-min, model blend — an
+    estimate for the exact location, not a measurement); fallback for the
+    point data = FMI HARMONIE point forecast; secondary station =
+    **Lappeenranta lentoasema (fmisid 101237)**, corroboration + 24 h
+    total only, never blocks on its own. Dock rain sensor remains the
+    later measured upgrade.
+
+All fourteen questions are decided (2026-09-14); the plan is ready for Phase 1.
 
 ## 12. Deliberately not in this plan
 
