@@ -1,9 +1,10 @@
 # Scheduled Mowing — weekly schedule (web UI + robot side)
 
 > Status: **PLANNED 2026-09-13; all 14 owner questions decided 2026-09-14;
-> Phase 1 (schedule file + Schedule page, no execution) IMPLEMENTED and
-> deployed 2026-09-14 (web UI `da42da6`) — browser/phone check owed; next =
-> Phase 2 (to-do list §14).** Builds on the docking
+> Phase 1 (schedule file + Schedule page) DONE 2026-09-14 (web UI `da42da6`);
+> Phase 2 (bridge `schedule_manager`) IMPLEMENTED and live 2026-09-14 with
+> the master switch OFF — motion tests with the owner owed (§14 gate);
+> next = Phase 3.** Builds on the docking
 > master plan ([../Docking plan/README.md](../Docking%20plan/README.md)) —
 > in particular `dock_manager` (04 §3, §6) and the web UI conventions of
 > 05. Everything a scheduled run needs on the robot already exists as a
@@ -300,9 +301,9 @@ Status field contract (the UI is written against this):
 | `hold_until` | int | epoch s, 0 = none (from `hold`) |
 | `clock_ok` | bool | NTP synchronized marker present (or RTC time plausible) |
 | `file` | `{sha1, loaded_at, error}` | `error` non-empty = last parse/validation failure, previous good schedule stays active |
-| `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
-| `next` | `{id, at, precharge_at} \| null` | the earliest enabled run |
-| `active` | `{id, phase, started_at, since, mission_state, mission_reason, charge_breaks} \| null` | `phase` ∈ `precharging \| waiting_dock \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning` |
+| `runs` | `[{id, day, time, enabled, next_at, last_outcome, last_reason, last_at}]` | one row per run, `next_at` = epoch of the next occurrence (0 when the run or the schedule is disabled) |
+| `next` | `{id, at, precharge_at, will_start} \| null` | the earliest enabled run — reported even while OFF / on hold; `will_start` = the clock would start it (impl. 2026-09-14) |
+| `active` | `{id, phase, reason, started_at, since, mission_state, mission_reason, charge_breaks, manual, window_until?} \| null` | `phase` ∈ `precharging \| waiting \| waiting_dock \| waiting_charge \| preparing \| undocking \| mowing \| charging \| returning`; while a slot's window is open and a precondition fails, `phase` is `waiting*` with `reason` = the blocker and `window_until` = end of the late-start window (impl. 2026-09-14) |
 | `rain` | `{raining, last_rain_at, mm_24h, forecast_mm, age_s, blocking, reason} \| null` | the scheduler's view of `ros2/weather/rain` (§5.1); `blocking` = the gate would refuse right now |
 | `last` | `{id, at, outcome, reason, ended_at}` | `outcome` ∈ `completed \| partial \| skipped \| failed \| canceled \| timeout`; `reason` per the list below |
 | `id` | string | echo of the last command id |
@@ -314,7 +315,18 @@ Skip / end reasons (goto/dock convention, plain strings): `disabled`,
 `missed`, `clock_unsynced`, `no_areas`, `rain`, `rain_recent`,
 `rain_forecast`, `rain_data_stale`, `rain_stop`, `param_refused`,
 `reset_failed`, `undock_failed`, `start_refused`, `operator_stop`,
-`mission_failed`, `dock_failed`, `timeout`, `bridge_restart`.
+`mission_failed`, `dock_failed`, `timeout`, `bridge_restart`, `dock_busy`, `canceled`.
+
+Implementation notes 2026-09-14 (Phase 2): a slot that passes while the
+master switch is OFF or a hold is active is consumed **silently** (no
+outcome, no alert — expected); `missed` is recorded only while enabled. A
+refused `run_now` records `last = skipped/<reason>` (the operator asked, so
+the answer is shown). `run_now` does not consume the weekly slot. The
+scheduler asks `dock_manager` to dock itself in the `returning` phase when
+no docking has started 8 s after the mission went idle (retry every 60 s,
+3 attempts, then `dock_failed` at `return_timeout_s`) — so the return
+works regardless of the Settings auto-dock toggle even before Phase 3's
+run policy.
 
 ## 4. Robot side
 
@@ -799,7 +811,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 |---|---|---|---|
 | **0 — Decisions** | Owner answers §11 — **DONE 2026-09-14** (14/14) | plan | — |
 | **1 — Schedule file + page (no execution)** — **DONE 2026-09-14** (`da42da6`) | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
-| **2 — Robot scheduler** | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
+| **2 — Robot scheduler** — **IMPLEMENTED 2026-09-14** (live, master OFF, motion tests owed) | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
 | **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
 | **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
@@ -1042,24 +1054,24 @@ the motors master switch OFF for every bench step.
 ### Phase 2 — robot scheduler
 
 **Bridge (`mowbot_mqtt_bridge`)**
-- [ ] `bridge_config.{hpp,cpp}`: `ScheduleConfig` + `schedule:` section parser; `topics.yaml` section (§4.5) + `schedule_enabled` in `param_control.nodes.mqtt_bridge_node`
-- [ ] `ParamManager`: `apply_transient()`, `restore_transient()`, `reset_progress(cb)`, `live_value()` (§4.2)
-- [ ] `LaunchManager`: `unit_state(id)` (read-only, Q13)
-- [ ] `DockManager`: `start_mission_from_dock(id, cb)` (refactor of the resume tail, resume path re-tested), getters (§4.3), `scheduled_run` status field
-- [ ] `schedule_manager.{hpp,cpp}`: file load/validate (mtime poll 5 s), clock + ISO-week `last_fired`, `next` computation, preconditions §4.1.1 (incl. `waiting_dock`, quiet hours, master switch, hold), run sequence §4.1.2, supervision §4.1.3 (without pre-charge/rain — Phase 3/3b), `max_run_min`, state file, status payload (≤ 60 s republish, shares the dock tick), commands `reload`/`run_now`/`cancel`/`skip_next`/`hold`/`release`
-- [ ] `mqtt_bridge_node.cpp` wiring (handlers, reconnect republish)
-- [ ] bridge restart re-attach logic (`active` in state file)
-- [ ] build + restart `mowbot-mqtt-bridge.service`; check `ros2/schedule/status` retained, `ros2/mowparams/status` shows `schedule_enabled`
+- [x] `bridge_config.{hpp,cpp}`: `ScheduleConfig` + `schedule:` section parser; `topics.yaml` section (§4.5) + `schedule_enabled` in `param_control.nodes.mqtt_bridge_node` — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] `ParamManager`: `apply_transient()`, `restore_transient()`, `reset_progress(cb)`, `live_value()` (§4.2) — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] `LaunchManager`: `unit_state(id)` (read-only, Q13) — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] `DockManager`: `start_mission_from_dock(id, cb)` (refactor of the resume tail, resume path re-tested), getters (§4.3), `scheduled_run` status field — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] `schedule_manager.{hpp,cpp}`: file load/validate (mtime poll 5 s), clock + ISO-week `last_fired`, `next` computation, preconditions §4.1.1 (incl. `waiting_dock`, quiet hours, master switch, hold), run sequence §4.1.2, supervision §4.1.3 (without pre-charge/rain — Phase 3/3b), `max_run_min`, state file, status payload (≤ 60 s republish, shares the dock tick), commands `reload`/`run_now`/`cancel`/`skip_next`/`hold`/`release` — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] `mqtt_bridge_node.cpp` wiring (handlers, reconnect republish) — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] bridge restart re-attach logic (`active` in state file) — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] build + restart `mowbot-mqtt-bridge.service`; check `ros2/schedule/status` retained, `ros2/mowparams/status` shows `schedule_enabled` — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
 
 **LXC**
-- [ ] ACL: `webui` `topic write ros2/schedule/cmd`; reload mosquitto
+- [x] ACL: `webui` `topic write ros2/schedule/cmd`; reload mosquitto — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
 
 **Frontend**
-- [ ] header pill + Rules master toggle live (`schedule_enabled` via `ros2/mowparams/cmd`, press-again confirm on enable); Settings → Docking mirror toggle
-- [ ] Up next from `status.next` / `active` / `last` with plain-English reasons; Run now / Skip next / Hold / Release buttons; Cancel run
-- [ ] active block pulsing + phase text; `AlertBanner` line for skipped/failed/timeout; `MissionControl` "Started by the schedule (…)"
-- [ ] LXC deploy
-- [ ] **Gate:** bench 10.1 steps 2–5, 7–9 pass (clock/DST, gates incl. `waiting_dock`, transient params + restore across a bridge restart, progress reset, overlap, missed, switches); field 10.2 steps 1–4 (short run via `run_now`, clock-fired run, Pause/Stop, Cancel) with `schedule_enabled` OFF except during the test
+- [x] header pill + Rules master toggle live (`schedule_enabled` via `ros2/mowparams/cmd`, press-again confirm on enable); Settings → Docking mirror toggle — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] Up next from `status.next` / `active` / `last` with plain-English reasons; Run now / Skip next / Hold / Release buttons; Cancel run — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] active block pulsing + phase text; `AlertBanner` line for skipped/failed/timeout; `MissionControl` "Started by the schedule (…)" — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [x] LXC deploy — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
+- [ ] **Gate (partly done 2026-09-14):** verified with the robot docked and nothing moving — retained status + `schedule_enabled` param, next-occurrence computation for all four runs (Mon 17:30 today, Tue 12:00, Wed 14:00, Sat 14:00), `run_now` refused `disabled` while OFF, `hold`/`release`, `reload`, bad action, state file. **Owed with the owner present (motors ON = real motion):** bench 10.1 steps 3–5, 7–9 that need the master switch ON (`waiting_dock`, transient params + restore across a bridge restart, progress reset, overlap, missed, switches) and field 10.2 steps 1–4 (short run via `run_now`, clock-fired run, Pause/Stop, Cancel). Also owed: `skip_next` (not tested to avoid consuming today's Monday slot) and the DST check (step 2) at the October change.
 
 ### Phase 3 — charging integration + calibration + Stop & dock
 
