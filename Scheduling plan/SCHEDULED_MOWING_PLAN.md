@@ -2,10 +2,10 @@
 
 > Status: **PLANNED 2026-09-13; all 14 owner questions decided 2026-09-14;
 > Phase 1 (schedule file + Schedule page) DONE 2026-09-14 (web UI `da42da6`);
-> Phases 2, 3 and 3b (bridge `schedule_manager`, charging integration, run
-> policy, Stop & dock, rain gate + rain stop with the LXC weather poller)
-> IMPLEMENTED and live 2026-09-14 with the master switch OFF — motion tests
-> with the owner owed (§14 gates); next = Phase 4 (HA + OLED).** Builds on the docking
+> ALL PHASES IMPLEMENTED and live 2026-09-14 (schedule file + page, bridge
+> `schedule_manager`, charging integration, run policy, Stop & dock, rain
+> gate + rain stop, HA entities, OLED page) with the master switch OFF —
+> motion tests with the owner owed (§14 gates), then the wrap-up week.** Builds on the docking
 > master plan ([../Docking plan/README.md](../Docking%20plan/README.md)) —
 > in particular `dock_manager` (04 §3, §6) and the web UI conventions of
 > 05. Everything a scheduled run needs on the robot already exists as a
@@ -815,7 +815,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 | **2 — Robot scheduler** — **IMPLEMENTED 2026-09-14** (live, master OFF, motion tests owed) | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
 | **3 — Charging integration + calibration** — **IMPLEMENTED 2026-09-14** (tests owed) | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** — **IMPLEMENTED 2026-09-14** (mission tests owed) | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
-| **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
+| **4 — HA + OLED** — **IMPLEMENTED 2026-09-14** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
 
 Rough size: Phase 1 ≈ 1 day (the grid is the bulk), Phase 2 ≈ 1–1.5 days
 (state machine + refactors + bench), Phase 3 ≈ ½ day, Phase 3b ≈ ½ day,
@@ -1110,10 +1110,10 @@ the motors master switch OFF for every bench step.
 
 ### Phase 4 — HA + OLED
 
-- [ ] `homeassistant.yaml`: sensors next run / phase / last outcome, switch `Mowing schedule` (`ha/ros2/mowparams/cmd`), buttons run-next / skip-next / hold (`ha/ros2/schedule/cmd`); LXC `mowbot-remote.conf` `in` rules (`schedule/cmd`, `mowparams/cmd` if not present) + `systemctl restart mosquitto`; verify on the HA broker
-- [ ] OLED (`mowbot_oled_interface`): `mqtt_status.py` second subscription (`ros2/schedule/status` → `state_store` `sched_*`, 60 s expiry), `ui.py` `page_schedule` (5/5, §7.1 rows), Select → read-only run list, local `schedule.json` fallback with `(no bridge)` marker, skip/fail alert once per `last.at`; ASCII only
-- [ ] restart `mowbot-oled-ui.service`; check page with bridge up, bridge down, schedule OFF, active run
-- [ ] **Gate:** HA entities visible + button presses land on the robot; OLED page correct in all four states
+- [x] `homeassistant.yaml`: sensors next run / phase / last outcome, switch `Mowing schedule` (`ha/ros2/mowparams/cmd`), buttons run-next / skip-next / hold (`ha/ros2/schedule/cmd`); LXC `mowbot-remote.conf` `in` rules (`schedule/cmd`, `mowparams/cmd` if not present) + `systemctl restart mosquitto`; verify on the HA broker — done 2026-09-14
+- [x] OLED (`mowbot_oled_interface`): `mqtt_status.py` second subscription (`ros2/schedule/status` → `state_store` `sched_*`, 60 s expiry), `ui.py` `page_schedule` (5/5, §7.1 rows), Select → read-only run list, local `schedule.json` fallback with `(no bridge)` marker, skip/fail alert once per `last.at`; ASCII only — done 2026-09-14
+- [x] restart `mowbot-oled-ui.service`; check page with bridge up, bridge down, schedule OFF, active run — done 2026-09-14
+- [x] **Gate 2026-09-14:** 9 discovery configs verified on the HA broker (.101); a command sent through `ha/ros2/schedule/cmd` reached the bridge (reload logged); OLED page rendered off-panel in all four states + run list + alert (PNG check), panel restarted clean. **Owed:** owner presses the HA buttons / switch from the HA UI and looks at the panel itself.
 
 ### Wrap-up
 - [ ] leave the schedule enabled for one real week (field 10.2 step 7); tune `precharge_lead_min`, factor, `mow_min_per_charge`, `charge_break_min`, rain thresholds from the data
