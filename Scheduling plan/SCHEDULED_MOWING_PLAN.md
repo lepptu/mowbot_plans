@@ -2,9 +2,10 @@
 
 > Status: **PLANNED 2026-09-13; all 14 owner questions decided 2026-09-14;
 > Phase 1 (schedule file + Schedule page) DONE 2026-09-14 (web UI `da42da6`);
-> Phase 2 (bridge `schedule_manager`) IMPLEMENTED and live 2026-09-14 with
-> the master switch OFF — motion tests with the owner owed (§14 gate);
-> next = Phase 3.** Builds on the docking
+> Phases 2 and 3 (bridge `schedule_manager`, charging integration, run
+> policy, Stop & dock) IMPLEMENTED and live 2026-09-14 with the master
+> switch OFF — motion tests with the owner owed (§14 gates); next = Phase 3b
+> (rain gate).** Builds on the docking
 > master plan ([../Docking plan/README.md](../Docking%20plan/README.md)) —
 > in particular `dock_manager` (04 §3, §6) and the web UI conventions of
 > 05. Everything a scheduled run needs on the robot already exists as a
@@ -812,7 +813,7 @@ owner walking past the robot sees "Sched skip: rain". Estimated effort
 | **0 — Decisions** | Owner answers §11 — **DONE 2026-09-14** (14/14) | plan | — |
 | **1 — Schedule file + page (no execution)** — **DONE 2026-09-14** (`da42da6`) | fileserver + watcher entries; backend `GET/PUT /api/schedule`, `/api/schedule/estimates`; Schedule page with grid, editor, rules (options only), estimates; SideNav entry. Page shows "scheduler not running on the robot" until `ros2/schedule/status` exists | web UI repo (`robot/`, backend, frontend) | — |
 | **2 — Robot scheduler** — **IMPLEMENTED 2026-09-14** (live, master OFF, motion tests owed) | `schedule_manager`, `ParamManager`/`DockManager`/`LaunchManager` hooks, `topics.yaml` section + `schedule_enabled` allowlist, ACL; status wired into Up next / active block / AlertBanner / MissionControl; `run_now`, `cancel`, `skip_next`, `hold` | bridge, LXC ACL, frontend | 1 |
-| **3 — Charging integration + calibration** | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
+| **3 — Charging integration + calibration** — **IMPLEMENTED 2026-09-14** (tests owed) | pre-charge (`charge_full` + storage suppression), `require_full_charge`/`start_window`, quiet-hour resume block, run policy in `dock_manager` **+ the D8 operator-stop auto-dock extension and the "Stop & dock" button label/help (Mowbot page, HA button description)**; backend calibration from stats; last-week ghosts | bridge, backend, frontend | 2, real runs for tuning |
 | **3b — Rain gate** | `backend/weather.py` + `ros2/weather/rain` + ACL; scheduler rain precondition + options; Rules card rain section + live line (§5.1) | backend, LXC ACL, bridge, frontend | 2 (backend part can ship with 1) |
 | **4 — HA + OLED** | §7 HA entities (optional); §7.1 OLED read-only SCHEDULE page 5/5 + run list sub-view + skip alert (decided) | bridge `homeassistant.yaml`, LXC bridge rules, `mowbot_oled_interface` | 2 |
 
@@ -1071,24 +1072,24 @@ the motors master switch OFF for every bench step.
 - [x] Up next from `status.next` / `active` / `last` with plain-English reasons; Run now / Skip next / Hold / Release buttons; Cancel run — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
 - [x] active block pulsing + phase text; `AlertBanner` line for skipped/failed/timeout; `MissionControl` "Started by the schedule (…)" — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
 - [x] LXC deploy — done 2026-09-14, bridge `schedule_manager` commit (see git), web UI `990e9af`
-- [ ] **Gate (partly done 2026-09-14):** verified with the robot docked and nothing moving — retained status + `schedule_enabled` param, next-occurrence computation for all four runs (Mon 17:30 today, Tue 12:00, Wed 14:00, Sat 14:00), `run_now` refused `disabled` while OFF, `hold`/`release`, `reload`, bad action, state file. **Owed with the owner present (motors ON = real motion):** bench 10.1 steps 3–5, 7–9 that need the master switch ON (`waiting_dock`, transient params + restore across a bridge restart, progress reset, overlap, missed, switches) and field 10.2 steps 1–4 (short run via `run_now`, clock-fired run, Pause/Stop, Cancel). Also owed: `skip_next` (not tested to avoid consuming today's Monday slot) and the DST check (step 2) at the October change.
+- [ ] **Gate (partly done 2026-09-14):** verified with the robot docked and nothing moving — retained status + `schedule_enabled` param, next-occurrence computation for all four runs (Mon 17:30 today, Tue 12:00, Wed 14:00, Sat 14:00), `run_now` refused `disabled` while OFF, `hold`/`release`, `reload`, bad action, state file. **Owed with the owner present (motors ON = real motion):** bench 10.1 steps 3–5, 7–9 that need the master switch ON (`waiting_dock`, transient params + restore across a bridge restart, progress reset, overlap, missed, switches) and field 10.2 steps 1–4 (short run via `run_now`, clock-fired run, Pause/Stop, Cancel). `skip_next` + `unskip` tested by the owner 2026-09-14 and the DST check (step 2) at the October change.
 
 ### Phase 3 — charging integration + calibration + Stop & dock
 
 **Bridge**
-- [ ] `DockManager`: `request_charge_full(why)`, `set_storage_suppressed()`, `set_run_policy()`, `arm_auto_dock(why)`, **D8 extension** (auto-dock on `operator` stop when `auto_dock_on_mission_complete` is on) + `topics.yaml` comment; Docking plan 04 §6 note
-- [ ] `schedule_manager`: pre-charge at `T0 − lead` (D6), `min_start_voltage` / `require_full_charge` / `start_window_min` (`waiting_charge`, D7), quiet-hour resume block (`clear_resume("quiet_hours")`), run-end cleanup of `charge_full_requested_`
-- [ ] build + restart
+- [x] `DockManager`: `request_charge_full(why)`, `set_storage_suppressed()`, `set_run_policy()`, `arm_auto_dock(why)`, **D8 extension** (auto-dock on `operator` stop when `auto_dock_on_mission_complete` is on) + `topics.yaml` comment; Docking plan 04 §6 note — done 2026-09-14
+- [x] `schedule_manager`: pre-charge at `T0 − lead` (D6), `min_start_voltage` / `require_full_charge` / `start_window_min` (`waiting_charge`, D7), quiet-hour resume block (`clear_resume("quiet_hours")`), run-end cleanup of `charge_full_requested_` — done 2026-09-14
+- [x] build + restart — done 2026-09-14
 
 **LXC backend**
-- [ ] calibration from stats (factor, `mow_min_per_charge`, `charge_break_min`) in `/api/schedule/estimates`; optional `GET /api/schedule/history`
+- [x] calibration from stats (factor, `mow_min_per_charge`, `charge_break_min`) in `/api/schedule/estimates`; optional `GET /api/schedule/history` — done 2026-09-14
 
 **Frontend**
-- [ ] Stop button → "Stop & dock" label + confirm/help text whenever docking follows (D8); HA button description
-- [ ] last-week ghost blocks (optional)
-- [ ] LXC deploy
+- [x] Stop button → "Stop & dock" label + confirm/help text whenever docking follows (D8); HA button description — done 2026-09-14
+- [ ] last-week ghost blocks (optional, not built)
+- [x] LXC deploy — done 2026-09-14
 - [ ] **Owner:** enable `resume_after_charge` in Settings → Docking; one supervised low-battery dock + resume (temporarily raised `mow_battery_low_voltage`)
-- [ ] **Gate:** bench 10.1 step 6 (pre-charge, waiting_charge); field 10.2 steps 5–6 (multi-charge run incl. quiet-hours drop, `max_run_min` timeout)
+- [ ] **Gate (owed, owner present):** bench 10.1 step 6 — with the master ON the pre-charge for the next slot shows as phase `precharging` at T0 − lead (`ros2/docking/status` `charge_full_requested` / `storage_suppressed`), `require_full_charge` ⇒ `waiting_charge`; field 10.2 steps 5–6 (multi-charge run incl. the quiet-hours drop, `max_run_min` timeout); Stop on a manual mission with auto-dock on ⇒ docks (D8)
 
 ### Phase 3b — rain gate
 
