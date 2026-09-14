@@ -322,7 +322,8 @@ Wiring in `mqtt_bridge_node.cpp` mirrors `dock_mgr_`: constructed when
 republish on reconnect (`status_payload()`), 1 s tick timer on the same
 single-threaded executor. It gets **non-owning pointers** to
 `ParamManager`, `DockManager`, `LaunchManager` (all live in the node) — the
-new internal calls are listed in §4.2–4.4. ROS inputs it subscribes itself:
+new internal calls are listed in §4.2–4.4 (`LaunchManager` is read-only
+for the scheduler, Q13). ROS inputs it subscribes itself:
 `hoverboard/motors_allowed` (latched Bool), `eStop_status`. MQTT input:
 the retained `ros2/weather/rain` (§5.1) — the bridge already subscribes
 command topics; this is its first *telemetry* subscription from the broker,
@@ -356,8 +357,8 @@ not inside quiet hours (`quiet_hours`) → **rain gate** (§5.1: `rain` while ra
 no active run (`previous_run_active`) → dock telemetry fresh
 (`dock_offline`) → `physically_docked` (`not_docked`; with `wait_for_dock` on: stay in phase `waiting_dock` and re-check every tick until seated or `T0 + late_start_min`, then `not_docked`) → e-stop clear
 (`estop`) → `motors_allowed` true (`motors_off`) → `bringup` unit running
-(`bringup_down`) → `mow_mission` unit running, else start it and wait ≤ 60 s
-for a fresh `idle` (`mission_unit_down`) → mission state fresh and `idle`
+(`bringup_down`) → `mow_mission` unit running (`mission_unit_down`; never
+auto-started — Q13; re-checked within the late-start window) → mission state fresh and `idle`
 (`mission_not_idle` / `mission_state_unknown`) → undock action server ready
 (`nav2_unavailable`) → pack ≥ `min_start_voltage` or dock COMPLETE
 (`battery_low`; with `require_full_charge` wait up to `start_window_min`
@@ -452,8 +453,8 @@ occurrence fired), `hold {hours}` / `release` (`hold_until`).
 
 ### 4.4 `LaunchManager` additions
 
-`std::string unit_state(const std::string & id)` and `bool start(const
-std::string & id)` (the existing `handle_command` path without MQTT).
+`std::string unit_state(const std::string & id)` only — the scheduler
+reads unit states and never starts or stops units (Q13).
 
 ### 4.5 Config, allowlist, files
 
@@ -466,10 +467,9 @@ schedule:
   file: /home/ros-pi/pi_ws/mowing_data/config/schedule.json
   state_file: /home/ros-pi/pi_ws/mowing_data/config/schedule_manager_state.json
   ntp_marker: /run/systemd/timesync/synchronized
-  mission_launch_id: mow_mission      # launch_control id to (re)start
+  mission_launch_id: mow_mission      # launch_control id whose state is checked (never started)
   bringup_launch_id: bringup
   start_settle_s: 15                  # start must leave idle within this
-  unit_start_wait_s: 60
 ```
 
 `param_control.nodes.mqtt_bridge_node` gains `schedule_enabled: { type: bool }`.
@@ -798,8 +798,9 @@ Full run last (multi-charge).
    T0+`late_start_min`; `wait_for_dock` off ⇒ `not_docked` at T0. With the dock Pi's zenoh down ⇒ `dock_offline`.
    With `schedule_enabled` false ⇒ `disabled`. Inside quiet hours ⇒
    `quiet_hours`. E-stop pressed ⇒ `estop`. Motors OFF ⇒ `motors_off`.
-   `mow_mission` unit stopped ⇒ the manager starts it, waits for idle,
-   proceeds (log line). `run_now` inside quiet hours ⇒ starts (Q12);
+   `mow_mission` unit stopped ⇒ `mission_unit_down`, nothing started;
+   `systemctl kill` the unit (crash) 1 min before T0 ⇒ systemd restarts
+   it and the run starts within the late window. `run_now` inside quiet hours ⇒ starts (Q12);
    `run_now` with `rain_recent` ⇒ refused `rain_recent`.
 4. Transient params: `run_now` for the sivupiha run ⇒ `ros2/mowparams/status`
    shows `area_filter = [sivupiha1_coverage, sivupiha2_coverage]`,
@@ -923,12 +924,12 @@ All ten questions are decided (2026-09-13).
     the Mowbot page Start button remains the way to mow in the rain).
     No settings for this. A run started this way may still be dropped at
     a charge-break resume that falls inside quiet hours (D9 rule).
-13. **`mow_mission` unit stopped at T0.** §4.1.1 currently *starts* the
-    unit automatically. A unit the owner stopped on purpose (maintenance,
-    a test) would come back at 13:00. Proposal: **skip with
-    `mission_unit_down`** instead of auto-starting — the unit boot-starts
-    and self-restarts on crashes anyway, so a stopped unit is a deliberate
-    signal. (`bringup` down already skips.)
+13. ~~`mow_mission` unit stopped at T0~~ **DECIDED 2026-09-14:** the
+    scheduler **never starts processes**. `mow_mission` not running ⇒
+    skip `mission_unit_down` (re-checked every tick within the late-start
+    window, so a crashed unit that systemd restarts within 15 s still
+    gets its run); `bringup` down ⇒ `bringup_down`. A unit the owner
+    stopped stays stopped until the owner starts it.
 14. **FMI station.** `place=lappeenranta` in §5.1 resolves to whatever
     station FMI picks for the name. The datum (61.2806 N, 28.8276 E) is
     near Joutseno/Saimaa — the owner should choose the nearest observation
